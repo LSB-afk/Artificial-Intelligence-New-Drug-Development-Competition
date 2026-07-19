@@ -1,0 +1,83 @@
+{
+  "seed": 42,
+  "bootstrap_iterations": 10000,
+  "note": "Decision-plane ablation set. Baseline = support-only judge; candidate = contradiction-aware critic. Packets are illustrative fixtures (see tests/fixtures/tyk2_ibd/manifest.json), not verified clinical snapshots.",
+  "cases": [
+    {
+      "id": "GC-002",
+      "scenario": "tyk2_ibd_indication_contradiction",
+      "kind": "decision",
+      "safety_critical": true,
+      "contradiction_case": true,
+      "expected_decision": "REJECT",
+      "evidence": {
+        "hypothesis_id": "IBD:TYK2",
+        "disease_id": "MONDO_0005265",
+        "indication_ids": ["MONDO_0005265", "FIX:IBD-UC", "FIX:IBD-CD"],
+        "target": "TYK2",
+        "observed_at": "2026-07-16T00:00:00Z",
+        "records": [
+          {"evidence_id": "EV-TYK2-PSO-APPROVAL", "kind": "approval", "indication": "plaque psoriasis", "indication_id": "FIX:PSORIASIS", "outcome": "positive", "stance": "context", "source_ref": "fixture://deucravacitinib-psoriasis-approval"},
+          {"evidence_id": "EV-TYK2-UC-PH2-FAIL", "kind": "trial", "indication": "ulcerative colitis", "indication_id": "FIX:IBD-UC", "outcome": "failed", "stance": "contradict", "source_ref": "fixture://tyk2-uc-phase2-failed"},
+          {"evidence_id": "EV-TYK2-CD-PH2-FAIL", "kind": "trial", "indication": "Crohn disease", "indication_id": "FIX:IBD-CD", "outcome": "failed", "stance": "contradict", "source_ref": "fixture://tyk2-cd-phase2-failed"}
+        ]
+      }
+    },
+    {
+      "id": "NO-INDICATION-SUPPORT",
+      "scenario": "cross_indication_only_holds_closed",
+      "kind": "decision",
+      "safety_critical": true,
+      "contradiction_case": false,
+      "expected_decision": "HOLD",
+      "evidence": {
+        "hypothesis_id": "IBD:TYK2",
+        "disease_id": "MONDO_0005265",
+        "indication_ids": ["MONDO_0005265", "FIX:IBD-UC", "FIX:IBD-CD"],
+        "target": "TYK2",
+        "observed_at": "2026-07-16T00:00:00Z",
+        "records": [
+          {"evidence_id": "EV-TYK2-PSO-APPROVAL", "kind": "approval", "indication": "plaque psoriasis", "indication_id": "FIX:PSORIASIS", "outcome": "positive", "stance": "context", "source_ref": "fixture://deucravacitinib-psoriasis-approval"}
+        ]
+      }
+    },
+    {
+      "id": "IN-INDICATION-SUPPORT",
+      "scenario": "in_indication_support_no_contradiction_advances",
+      "kind": "decision",
+      "safety_critical": false,
+      "contradiction_case": false,
+      "expected_decision": "ADVANCE",
+      "evidence": {
+        "hypothesis_id": "IBD:DEMO-POS",
+        "disease_id": "MONDO_0005265",
+        "indication_ids": ["MONDO_0005265"],
+        "target": "DEMO-POS",
+        "observed_at": "2026-07-16T00:00:00Z",
+        "records": [
+          {"evidence_id": "EV-DEMO-GEN", "kind": "genetic", "indication": "inflammatory bowel disease", "indication_id": "MONDO_0005265", "outcome": "positive", "stance": "support", "source_ref": "fixture://ibd-genetic-support"}
+        ]
+      }
+    },
+    {
+      "id": "GC-010",
+      "scenario": "api_500_uses_pinned_snapshot",
+      "kind": "fallback",
+      "safety_critical": true,
+      "contradiction_case": true,
+      "expect_fallback": true,
+      "expected_decision": "REJECT",
+      "evidence": {
+        "hypothesis_id": "IBD:TYK2",
+        "disease_id": "MONDO_0005265",
+        "indication_ids": ["MONDO_0005265", "FIX:IBD-UC", "FIX:IBD-CD"],
+        "target": "TYK2",
+        "observed_at": "2026-07-16T00:00:00Z",
+        "records": [
+          {"evidence_id": "EV-TYK2-PSO-APPROVAL", "kind": "approval", "indication": "plaque psoriasis", "indication_id": "FIX:PSORIASIS", "outcome": "positive", "stance": "context", "source_ref": "fixture://deucravacitinib-psoriasis-approval"},
+          {"evidence_id": "EV-TYK2-UC-PH2-FAIL", "kind": "trial", "indication": "ulcerative colitis", "indication_id": "FIX:IBD-UC", "outcome": "failed", "stance": "contradict", "source_ref": "fixture://tyk2-uc-phase2-failed"}
+        ]
+      }
+    }
+  ]
+}

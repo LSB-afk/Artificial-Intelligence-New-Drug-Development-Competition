@@ -2,7 +2,7 @@
 
 이 저장소는 제4회 인공지능(AI) 신약개발 경진대회 예선 제안서와 본선 구현을 준비하기 위한 작업 공간이다.
 
-현재 방향은 **분야 1: 자율형 가설 생성 및 검증**과 **분야 2: 도구 활용 기반의 분자 최적화 루프**를 융합한 `Hypothesis-to-Lead Agent`다. 질병 입력에서 출발해 타깃 가설을 근거 기반으로 만들고, 공개 DB와 화학 도구를 호출해 seed molecule 수집, 구조 최적화, ADMET/합성 가능성 평가, 가설 재검토까지 반복하는 멀티 에이전트 시스템으로 설계한다.
+현재 방향은 **분야 1: 자율형 가설 생성 및 검증**과 **분야 2: 도구 활용 기반의 분자 최적화 루프**를 융합한 `Hypothesis-to-Lead Agent`다. 핵심 차별점은 일반적인 폐루프 자체가 아니라, 적응증별 임상 근거를 먼저 반증하고 `ADVANCE/HOLD/REJECT`를 결정하며 실패 사유를 1급 산출물로 남기는 evidence-critical agent harness다.
 
 ## 핵심 산출물
 
@@ -11,6 +11,14 @@
 - [제안서 작성 골격](docs/03_proposal_outline.md): 10쪽 이내 HWPX 제안서에 바로 옮길 목차와 메시지
 - [근거 소스](docs/04_sources.md): 공식 대회/기술/논문/도구 출처
 - [실행 계획](docs/05_work_plan.md): 예선 제출 전 작업과 본선 4주 구현 계획
+- [최신 냉정 평가](05_리서치/2026-07-16_H2L-Forge_냉정평가_및_개선안.md): TYK2/IBD 전제, 선행연구, 도구 실현성을 바로잡은 현재 기준
+- [점수 개선 리서치](docs/06_score_improvement_research.md): 2026-07-06 역사 자료이며 최신 평가와 충돌하는 부분은 superseded
+- [Agent loop architecture](docs/07_agent_loop_architecture.md): 기존 capability/log/retry 초안
+- [Molecular optimization loop](docs/08_molecular_optimization_loop.md): target `ADVANCE` 또는 `METHOD_ONLY`에서만 사용하는 분자 평가 초안
+- [Eval rubric](evals/rubric.md): 본선 MVP와 제안서 품질을 반복 평가하기 위한 pass/warn/fail 기준
+- [Harness contract](harness.yaml): canonical artifacts, quality gates, risks, decisions, open questions
+- [Canonical architecture](docs/07_architecture.md): 6-role runtime, deterministic state/approval engine, snapshot-first dataflow
+- [Demo flow and eval plan](docs/09_flow.md): TYK2 rejection demo, API fallback, five-minute replay, measurable thresholds
 
 ## 저장소 구조
 
@@ -24,17 +32,43 @@
 ├── notebooks/        # 탐색/분석 노트북
 ├── prompts/          # 에이전트 역할 프롬프트
 ├── reports/          # 제안서/본선 보고서 산출물
-├── src/              # 본선 구현 코드
+├── src/h2l/          # 의사결정 하네스 코어 (registry, state_machine, replay, eval_runner, cli)
 └── tests/            # 평가/회귀 테스트
 ```
 
+## 실행 방법
+
+JB(`Search-for-AI-based-internal-regulations`)의 운영 불변조건을 이식한 결정론적 오프라인 코어다. 외부 API·RDKit 없이 동작한다.
+
+```bash
+# 전체 테스트 (38 케이스)
+python3 -m pytest
+
+# TYK2/IBD 고정 사례 한 건 실행 -> REJECT, molecule_eligible=false
+PYTHONPATH=src python3 -m h2l.cli run --evidence tests/fixtures/tyk2_ibd/normalized_evidence.json
+
+# 근거-지지 전용 baseline vs 반증 인지 candidate ablation 평가 (seed 42, 재현 가능)
+PYTHONPATH=src python3 -m h2l.cli eval --cases evals/decision_cases.json --out artifacts/eval_report.json
+```
+
+코어가 보장하는 4가지 이식 불변조건:
+
+1. 승인되지 않은 새 근거 스냅샷은 현재 판단을 바꾸지 않는다(`registry`).
+2. 타깃 판단과 분자 단계 사이에 결정론적 상태 전이와 사람 승인을 둔다(`state_machine`).
+3. 도구가 실패해도 고정 스냅샷으로 동일한 판단을 재생한다(`replay`, snapshot-first fallback).
+4. 평가 plane은 과학 상태를 변경하지 못하며, 같은 seed로 두 번 실행하면 byte-equivalent하다(`eval_runner`).
+
 ## 제안 시스템 한 줄
 
-`Hypothesis-to-Lead Agent`는 질병-타깃 근거 그래프와 분자 최적화 도구를 연결해, 검증 가능한 신약개발 가설과 후보 구조를 함께 제안하는 에이전틱 AI다.
+`H2L-Forge`는 질병-타깃 근거를 스스로 반증해 잘못된 가설을 먼저 멈추고, 통과한 타깃에만 분자 도구를 연결하는 감사 가능한 신약개발 의사결정 에이전트다.
 
 ## 현재 상태
 
 - 공식 대회 요건 분석 완료
 - 분야 1+2 융합 프로세스 초안 완료
-- GitHub 초기 워크스페이스 구조 생성
-- 다음 작업: 대표 질환/타깃 데모 케이스 1개 선정, 제안서 본문 초안 작성, 최소 프로토타입 스펙 확정
+- GitHub `main`을 최신 커밋 `25c622e`로 동기화
+- 대표 negative demo: inflammatory bowel disease / TYK2 / deucravacitinib의 적응증 불일치와 IBD 임상 실패를 에이전트가 탐지해 `REJECT/HOLD`
+- positive molecule demo target: 미정이며 동일한 임상 근거 gate 통과 전까지 molecule eligibility 차단
+- AI agent harness의 CPS, 상태모델, PRD, 아키텍처, flow, eval, risk rule 초안 생성
+- JB 이식 코어 구현 완료: `src/h2l`(registry/state_machine/replay/eval_runner/cli) + 38개 테스트 통과, 결정론적 오프라인 평가 재현 확인
+- 다음 작업: positive target evidence qualification, live Open Targets/ChEMBL/ClinicalTrials.gov adapter + snapshot fallback, `MOLECULE_ELIGIBLE` 이후 RDKit/ADMET 분자 검증

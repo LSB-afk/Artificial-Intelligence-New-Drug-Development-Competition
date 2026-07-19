@@ -1,5 +1,10 @@
 # 분야 1+2 융합 설계
 
+> **2026-07-19 교정:** 일반적인 target-to-lead 폐루프 자체는 선행연구와 겹친다.
+> 현재 차별점은 적응증별 반증 검색, `ADVANCE/HOLD/REJECT`, 실패 ledger, snapshot provenance다.
+> TYK2/deucravacitinib은 IBD positive target이 아니라 rejection demo이며, canonical 설계는
+> `docs/05_domain-model.md`부터 `docs/10_eval-plan.md`를 따른다.
+
 ## 1. 제안명
 
 작업명: `Hypothesis-to-Lead Agent`
@@ -28,12 +33,14 @@
   -> 질병 ID 정규화(EFO/MeSH/동의어)
   -> 질병-타깃 후보 수집(Open Targets, ChEMBL, 문헌)
   -> 타깃 우선순위화(근거, tractability, 안전성, assay availability)
-  -> 검증 가능한 가설 생성
+  -> 검증 가능한 가설 생성 + 적응증별 임상 반증 검색
+  -> ADVANCE/HOLD/REJECT + human approval
+  -> [ADVANCE만] molecule eligibility
   -> seed molecule 수집(ChEMBL activity, known drugs, similarity)
   -> 분자 표준화/필터링(RDKit)
   -> 구조 최적화(SELFIES/STONED 또는 scaffold-constrained mutation)
-  -> ADMET/독성/약물성 평가(TDC 모델, RDKit QED, PAINS/alert)
-  -> 합성 가능성 평가(AiZynthFinder 또는 SA score proxy)
+  -> ADMET/독성/약물성 평가(planned ADMET-AI, RDKit QED, PAINS/alert)
+  -> 합성 가능성 평가(SA/RAscore bulk -> optional top-5 AiZynthFinder)
   -> 후보 랭킹 및 실패 원인 분석
   -> 가설 재검토: 타깃 유지, 보류, 다음 타깃 전환
   -> 근거 기반 리포트 생성
@@ -46,7 +53,7 @@
 | Orchestrator | 목표 분해, 작업 순서 결정, 실패 시 재시도 | 질병명, 제약조건, 평가 목표 | 실행 계획, 도구 호출 순서 |
 | Disease Normalizer | 질병/표현형 ID 정규화 | 질병명, synonym | EFO/MeSH 후보, 선택 근거 |
 | Target Discovery Agent | 질병 관련 타깃 후보 수집 | disease ID | 타깃 리스트, association score, evidence type |
-| Evidence Critic | 근거 품질 평가 | 타깃 후보, 데이터 출처 | 타깃 우선순위, 근거/리스크 메모 |
+| Evidence Critic | 지지·반증·적응증별 임상 근거 평가 | 타깃 후보, claim ledger | `ADVANCE/HOLD/REJECT`, contradiction/failure memo |
 | Hypothesis Writer | 검증 가능한 신약개발 가설 작성 | 타깃, 질병, pathway, biomarker | 한 문장 가설, 검증 실험/데이터 계획 |
 | Seed Ligand Agent | seed molecule 수집 | target ID, assay 조건 | ChEMBL molecule IDs, SMILES, activity table |
 | Molecule Optimizer | 분자 변형과 후보 생성 | seed SMILES, objective | 후보 SMILES, novelty/similarity |
@@ -61,9 +68,10 @@
 | 질병-타깃 근거 | Open Targets Platform GraphQL/API | disease, target, association, tractability, safety 근거를 구조화해서 가져올 수 있다. |
 | 생물활성/분자 데이터 | ChEMBL Web Services | target, assay, activity, molecule, mechanism, drug indication 데이터를 API로 수집 가능하다. |
 | 화학 구조 처리 | RDKit | SMILES 표준화, descriptor, QED, 구조 필터, similarity 계산에 필수다. |
-| ADMET benchmark/model | Therapeutics Data Commons | ADMET 데이터셋과 scaffold split, AUROC/AUPRC/MAE 등 평가 관행을 제공한다. |
+| ADMET benchmark | Therapeutics Data Commons | 데이터셋과 scaffold split 평가 관행을 제공하며 ready predictor로 취급하지 않는다. |
+| ADMET inference (planned) | ADMET-AI | 사전 학습 모델 경로이며 설치·버전 smoke test 후에만 구현 완료로 표시한다. |
 | 분자 탐색 | SELFIES/STONED | training-free 또는 경량 분자 변형 루프를 구성하기 좋다. |
-| 합성 가능성 | AiZynthFinder | Monte Carlo tree search 기반 retrosynthesis planning으로 본선 차별화 가능성이 있다. |
+| 합성 가능성 | SA score/RAscore + optional AiZynthFinder | 전체 후보는 빠른 proxy, 최종 5개만 route feasibility로 비용을 제한한다. |
 | 문헌 근거 | Europe PMC/PubMed | 타깃-질병 근거 설명과 참고문헌 검증에 사용한다. |
 
 ## 7. 타깃 우선순위 점수 설계
@@ -96,7 +104,7 @@ target_score =
 | 활성 가능성 | target QSAR score 또는 ChEMBL 근접 ligand similarity | 높임 |
 | 약물성 | RDKit QED, Lipinski-like descriptors | 높임 |
 | ADMET | hERG, AMES, DILI, CYP inhibition risk | 낮춤 |
-| 합성 가능성 | AiZynthFinder route score 또는 SA score | 높임 |
+| 합성 가능성 | SA/RAscore, optional top-5 AiZynthFinder route signal | 높임 |
 | novelty | seed 대비 Tanimoto 범위, known compounds와 거리 | 적정 범위 |
 | 안전성 | structural alerts, forbidden motifs | 위험 제거 |
 
@@ -146,13 +154,14 @@ target_score =
 4. ChEMBL에서 각 타깃 seed ligand 20~100개 수집
 5. RDKit 기반 표준화/QED/descriptor/필터링
 6. SELFIES 또는 RDKit 변형으로 후보 100~500개 생성
-7. TDC 기반 ADMET 모델 또는 사전 학습/경량 baseline으로 위험 평가
+7. smoke-tested ADMET-AI 또는 명시적 limited fallback으로 위험 평가
 8. 최종 후보 5개와 가설 리포트 출력
 9. Streamlit/FastAPI 또는 notebook-to-report 형태로 시연
 
 ## 12. 차별화 포인트
 
-- 타깃 발굴과 분자 최적화를 하나의 폐루프로 묶는다.
+- PharmAgents, OriGene, AI co-scientist 등 가까운 선행연구를 명시하고 폐루프 자체를 최초라고 주장하지 않는다.
+- 타깃을 찾는 것보다 적응증별 반증 근거를 우선 탐색하고, 틀린 타깃을 스스로 기각하는 loop를 전면에 둔다.
 - 에이전트가 "왜 이 타깃인가"와 "왜 이 분자인가"를 같은 근거 그래프에서 설명한다.
 - 실패를 숨기지 않고 데이터 부족, 안전성 경고, 합성 불가 등을 다음 행동으로 연결한다.
 - 예선 평가표의 6개 항목을 시스템 기능과 직접 매칭한다.

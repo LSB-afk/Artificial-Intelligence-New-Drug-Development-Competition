@@ -1,0 +1,37 @@
+{
+  "hypothesis_id": "IBD:TYK2",
+  "disease_id": "MONDO_0005265",
+  "indication_ids": ["MONDO_0005265", "FIX:IBD-UC", "FIX:IBD-CD"],
+  "target": "TYK2",
+  "reference_drug": "deucravacitinib",
+  "observed_at": "2026-07-16T00:00:00Z",
+  "records": [
+    {
+      "evidence_id": "EV-TYK2-PSO-APPROVAL",
+      "kind": "approval",
+      "indication": "plaque psoriasis",
+      "indication_id": "FIX:PSORIASIS",
+      "outcome": "positive",
+      "stance": "context",
+      "source_ref": "fixture://deucravacitinib-psoriasis-approval"
+    },
+    {
+      "evidence_id": "EV-TYK2-UC-PH2-FAIL",
+      "kind": "trial",
+      "indication": "ulcerative colitis",
+      "indication_id": "FIX:IBD-UC",
+      "outcome": "failed",
+      "stance": "contradict",
+      "source_ref": "fixture://tyk2-uc-phase2-failed"
+    },
+    {
+      "evidence_id": "EV-TYK2-CD-PH2-FAIL",
+      "kind": "trial",
+      "indication": "Crohn disease",
+      "indication_id": "FIX:IBD-CD",
+      "outcome": "failed",
+      "stance": "contradict",
+      "source_ref": "fixture://tyk2-cd-phase2-failed"
+    }
+  ]
+}

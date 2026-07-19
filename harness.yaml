@@ -1,0 +1,123 @@
+project:
+  name: "H2L-Forge"
+  domain: "agentic-drug-discovery-decision-support"
+  stage: "discovery"
+  owner: "LSB-afk / project team"
+  repo: "https://github.com/LSB-afk/Artificial-Intelligence-New-Drug-Development-Competition"
+  last_updated: "2026-07-19"
+
+artifacts:
+  source_log: "docs/00_source-log.md"
+  meeting_log: "docs/01_meeting-log.md"
+  business_model: "docs/01_business-model.md"
+  cps: "docs/02_cps.md"
+  principles: "docs/03_principles.md"
+  definitions: "docs/04_definitions.md"
+  domain_model: "docs/05_domain-model.md"
+  prd: "docs/06_prd.md"
+  architecture: "docs/07_architecture.md"
+  feature_spec: "docs/08_feature-spec.md"
+  flow: "docs/09_flow.md"
+  eval_plan: "docs/10_eval-plan.md"
+  change_log: "docs/11_change-log.md"
+  handoff: "docs/12_handoff.md"
+  migration_map: "docs/harness-migration-map.md"
+  validation_report: "validation-report.md"
+
+rules:
+  naming: "rules/naming-rules.md"
+  imports: "rules/import-export-rules.md"
+  ui: "rules/ui-rules.md"
+  data: "rules/data-rules.md"
+  agent: "rules/agent-rules.md"
+  compliance: "rules/compliance-rules.md"
+
+evals:
+  golden_cases: "evals/golden-cases.md"
+  cases_jsonl: "evals/cases.jsonl"
+  rubric: "evals/rubric.md"
+  failure_modes: "evals/failure-modes.md"
+  decision_cases: "evals/decision_cases.json"
+
+implementation:
+  design_spec: "docs/superpowers/specs/2026-07-19-jb-derived-drug-harness-design.md"
+  package: "src/h2l"
+  modules:
+    registry: "src/h2l/registry.py"
+    state_machine: "src/h2l/state_machine.py"
+    replay: "src/h2l/replay.py"
+    eval_runner: "src/h2l/eval_runner.py"
+    cli: "src/h2l/cli.py"
+  tests: "tests/"
+  fixtures: "tests/fixtures/tyk2_ibd"
+
+quality_gates:
+  docs_complete: false
+  principles_enforced: true
+  domain_model_complete: false
+  features_trace_to_problem: true
+  lint_rules_defined: true
+  evals_defined: true
+  core_harness_runnable: true
+  offline_eval_reproducible: true
+  demo_flow_rehearsed: false
+  known_risks_disclosed: true
+  handoff_ready: false
+
+risks:
+  - id: "R-001"
+    status: "open"
+    risk: "Positive molecule-optimization target is not yet evidence-qualified."
+    control: "Block molecule optimization unless the target is ADVANCE; allow TYK2 only in REJECTION_DEMO or METHOD_ONLY mode."
+  - id: "R-002"
+    status: "open"
+    risk: "ChEMBL TYK2 activity count from 2026-07-06 was not reverified during the 2026-07-16 API outage."
+    control: "Treat the number as pending verification and prohibit it from final claims until a response snapshot is stored."
+  - id: "R-003"
+    status: "open"
+    risk: "ADMET-AI and RAscore installation/runtime have not been smoke-tested in this repository."
+    control: "Keep them as planned dependencies and require a version-pinned smoke test before implementation claims."
+  - id: "R-004"
+    status: "open"
+    risk: "Drug-design outputs and synthesis information can create scientific, safety, and dual-use risk."
+    control: "Use deterministic chemistry gates, suppress actionable synthesis instructions, require human approval, and retain audit events."
+
+decisions:
+  - id: "D-001"
+    date: "2026-07-19"
+    decision: "Use the 2026-07-16 cold assessment and commit 25c622e as the current correction source."
+    rationale: "It corrects the indication-specific clinical premise and tool feasibility."
+  - id: "D-002"
+    date: "2026-07-19"
+    decision: "Position TYK2/deucravacitinib as an IBD self-falsification and rejection demo, not a positive validation case."
+    rationale: "Deucravacitinib is psoriasis-approved but failed the cited phase-2 IBD programs."
+  - id: "D-003"
+    date: "2026-07-19"
+    decision: "Differentiate on indication-aware contradiction detection, failure ledgers, provenance, and lightweight reproducibility."
+    rationale: "The generic target-to-lead closed loop already has close prior art."
+  - id: "D-004"
+    date: "2026-07-19"
+    decision: "Use ADMET-AI for planned pretrained inference and a two-stage SA/RAscore then top-5 AiZynthFinder synthesis gate."
+    rationale: "TDC is a benchmark/data source, while full-loop retrosynthesis is too slow for the MVP."
+  - id: "D-005"
+    date: "2026-07-19"
+    decision: "Keep the Score Improvement Agent in the evaluation plane, outside scientific run-time authority."
+    rationale: "Competition-score optimization must not alter scientific decisions or evidence."
+  - id: "D-006"
+    date: "2026-07-19"
+    decision: "Implement the JB-derived decision core (src/h2l) as a deterministic offline harness per the 2026-07-19 design spec, before any UI or live API."
+    rationale: "Approach C ports JB's proven operating invariants (versioned registry, approval gate, snapshot-first fallback, read-only eval) with a small, testable footprint. 38 tests pass; TYK2/IBD returns REJECT/molecule_eligible=false; the offline ablation eval is byte-reproducible under seed 42."
+
+open_questions:
+  - id: "Q-001"
+    question: "Which alternative target will be the positive molecule-optimization branch after the same indication-aware evidence gate?"
+    owner: "Domain lead"
+  - id: "Q-002"
+    question: "Which LLM/runtime and credit budget will be available in the final environment?"
+    owner: "Engineering lead"
+  - id: "Q-003"
+    question: "What exact licenses, API terms, snapshot retention, and redistribution rules apply to each external source?"
+    owner: "Project lead"
+  - id: "Q-004"
+    question: "What measured manual baseline will support time/cost savings claims?"
+    owner: "Product lead"

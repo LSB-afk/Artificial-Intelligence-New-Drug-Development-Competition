@@ -1,0 +1,15 @@
+{
+  "fixture_id": "tyk2_ibd",
+  "purpose": "Rejection-demo fixture: TYK2/deucravacitinib evaluated for an IBD hypothesis.",
+  "expected_decision": "REJECT",
+  "expected_molecule_eligible": false,
+  "provenance_note": "Illustrative fixture, NOT a verified ontology/clinical snapshot. disease_id MONDO_0005265 matches evals/cases.jsonl GC-002; sub-indication ids use a FIX: namespace to avoid asserting unverified MONDO mappings. Trial source_refs use a fixture:// scheme and are not real registry identifiers.",
+  "unverified_claims": [
+    "Row count in chembl_500.json is illustrative and is NOT a verified ChEMBL count (see harness.yaml R-002).",
+    "Failed-trial source_refs are placeholders, not fabricated NCT numbers."
+  ],
+  "files": {
+    "evidence": "normalized_evidence.json",
+    "measured_activity": "chembl_500.json"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "note": "Illustrative measured-activity records. Row count is NOT a verified ChEMBL snapshot (harness.yaml R-002). Used only to prove that measured binding activity is treated as context and does not override an indication contradiction.",
+  "target_chembl_id": "CHEMBL3553",
+  "activity_evidence_type": "MEASURED",
+  "records": [
+    {
+      "evidence_id": "EV-TYK2-BIND-1",
+      "kind": "binding",
+      "indication": null,
+      "indication_id": null,
+      "outcome": "positive",
+      "stance": "context",
+      "source_ref": "fixture://tyk2-binding-illustrative-1"
+    },
+    {
+      "evidence_id": "EV-TYK2-BIND-2",
+      "kind": "binding",
+      "indication": null,
+      "indication_id": null,
+      "outcome": "positive",
+      "stance": "context",
+      "source_ref": "fixture://tyk2-binding-illustrative-2"
+    }
+  ]
+}

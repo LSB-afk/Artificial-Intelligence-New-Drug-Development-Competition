@@ -1,0 +1,14 @@
+[project]
+name = "h2l-forge"
+version = "0.1.0"
+description = "Evidence-critical drug-discovery decision harness (JB-derived operating invariants)."
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.setuptools.packages.find]
+where = ["src"]
