@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>하데스 콘솔 | H2L-Forge</title>
+    <link rel="stylesheet" href="static/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="brand-block">
+          <span class="network-mark">H2L-Forge / OPS</span>
+          <h1>하데스 콘솔</h1>
+          <p class="brand-subtitle">프로젝트, 태스크, 에이전트 실행, 비용, 승인을 한 곳에서 통제합니다.</p>
+        </div>
+        <div class="header-actions" aria-label="콘솔 작업">
+          <button class="secondary-button fit-button" type="button" data-action="reload">새로고침</button>
+          <button class="primary-button fit-button" type="button" data-action="create-project">프로젝트 생성</button>
+        </div>
+      </header>
+
+      <section class="demo-notice" aria-label="데이터 출처 안내">
+        <strong id="repository-summary">저장소 요약 기반 화면</strong>
+        <span id="demo-operations">현재 데이터는 repository summaries + demo operations data 로 시드된 운영 데모입니다.</span>
+      </section>
+
+      <section id="sync-rail" class="sync-rail" aria-label="동기화 상태">
+        <div class="sync-title">
+          <span class="sync-label">CONSOLE</span>
+          <strong><span class="dot" aria-hidden="true"></span>로딩 중</strong>
+        </div>
+        <div class="sync-metric"><span>PROJECTS</span><strong>--</strong></div>
+        <div class="sync-metric"><span>TASKS</span><strong>--</strong></div>
+        <div class="sync-metric"><span>AGENTS</span><strong>--</strong></div>
+        <div class="sync-metric"><span>APPROVALS</span><strong>--</strong></div>
+      </section>
+
+      <section id="ops-pulse" class="ops-pulse" aria-label="운영 펄스">
+        <div class="pulse-step"><span>projects</span><strong>--</strong><em>스냅샷 로딩</em></div>
+        <div class="pulse-step"><span>tasks</span><strong>--</strong><em>스냅샷 로딩</em></div>
+        <div class="pulse-step"><span>agents</span><strong>--</strong><em>스냅샷 로딩</em></div>
+        <div class="pulse-step"><span>runs</span><strong>--</strong><em>스냅샷 로딩</em></div>
+        <div class="pulse-step"><span>costs</span><strong>--</strong><em>스냅샷 로딩</em></div>
+        <div class="pulse-step"><span>approvals</span><strong>--</strong><em>스냅샷 로딩</em></div>
+      </section>
+
+      <nav id="primary-nav" class="primary-nav" aria-label="콘솔 보기"></nav>
+      <main id="view-root" class="view-root" tabindex="-1" aria-live="polite">
+        <section class="empty-state" role="status">콘솔 스냅샷을 불러오는 중입니다.</section>
+      </main>
+
+      <dialog id="action-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-description"></dialog>
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    </div>
+    <script src="static/app.js"></script>
+  </body>
+</html>

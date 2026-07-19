@@ -29,26 +29,62 @@ def test_health_route():
     assert status == 200 and payload["status"] == "ok"
 
 
-def test_index_is_the_static_shell():
+def test_index_is_the_hades_console_shell():
     status, ctype, body = route("GET", "/")
     assert status == 200
     assert "text/html" in ctype
     # JB-style app shell markers, rendered client-side.
     assert "H2L-Forge" in body
+    assert "하데스 콘솔" in body
     assert "sync-rail" in body
     assert "primary-nav" in body
+    assert 'id="ops-pulse"' in body
+    assert 'id="action-dialog"' in body
+    assert 'id="toast"' in body
+    assert 'aria-live="polite"' in body
+    assert "repository-summary" in body
+    assert "demo-operations" in body
     assert 'src="static/app.js"' in body
 
 
-def test_static_css_and_js_are_served():
+def test_static_css_and_js_are_served_with_console_contract():
     css_status, css_ctype, css_body = route("GET", "/static/styles.css")
     assert css_status == 200
     assert "text/css" in css_ctype
     assert "--corporate-green" in css_body  # JB design tokens reused verbatim
+    assert ".ops-pulse" in css_body
+    assert ".pulse-step" in css_body
+    assert "prefers-reduced-motion" in css_body
+    assert "data-label" in css_body
 
     js_status, js_ctype, js_body = route("GET", "/static/app.js")
     assert js_status == 200
     assert "javascript" in js_ctype
+    assert "GET /api/console" not in js_body
+    assert 'fetch("/api/console"' in js_body
+    assert "function escapeHtml" in js_body
+    assert "showModal()" in js_body
+    assert "showToast" in js_body
+    assert 'data-action="' in js_body
+    assert 'role="alert"' in js_body
+    for endpoint in (
+        "/api/projects",
+        "/api/tasks",
+        "/api/tasks/${id}/checkout",
+        "/api/tasks/${id}/release",
+        "/api/agents/${id}/pause",
+        "/api/agents/${id}/resume",
+        "/api/runs/${id}/retry",
+        "/api/approvals/${id}/${decision}",
+    ):
+        assert endpoint in js_body
+
+
+def test_app_js_declares_all_management_views():
+    status, _, body = route("GET", "/static/app.js")
+    assert status == 200
+    for view in ("dashboard", "projects", "tasks", "agents", "runs", "costs", "approvals", "activity"):
+        assert view in body
 
 
 def test_status_rail_reports_pending_and_approved():
