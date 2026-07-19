@@ -87,6 +87,84 @@ def test_agent_release_retry_and_cost_summary(tmp_path):
     assert costs["total_tokens"] > 0
 
 
+def test_release_task_cancels_active_checkout_run_before_clearing_links(tmp_path):
+    store = HadesConsoleStore(tmp_path / "console.json")
+    snapshot = store.snapshot()
+    task = next(item for item in snapshot["tasks"] if item["status"] == "todo")
+    agent = snapshot["agents"][0]
+
+    claimed = store.checkout_task(task["id"], agent["id"], ["todo"], "run-release-cancel", "operator")
+    before_activity = len(store.snapshot()["activity"])
+    released = store.release_task(claimed["id"], "operator")
+    after = store.snapshot()
+    run = next(item for item in after["runs"] if item["id"] == "run-release-cancel")
+
+    assert released["status"] == "todo"
+    assert released["assignee_agent_id"] is None
+    assert released["checkout_run_id"] is None
+    assert run["status"] == "cancelled"
+    assert run["finished_at"] is not None
+    assert run["duration_ms"] >= 0
+    assert run["next_action"] == "checkout released"
+    assert "checkout released by operator" in run["log"]
+    assert len(after["activity"]) == before_activity + 1
+    assert after["activity"][-1]["action"] == "release_task"
+    assert after["activity"][-1]["run_id"] == "run-release-cancel"
+
+
+def test_release_task_does_not_rewrite_terminal_checkout_run(tmp_path):
+    store = HadesConsoleStore(tmp_path / "console.json")
+    state = store.snapshot()
+    task = next(item for item in state["tasks"] if item["status"] == "todo")
+    agent = state["agents"][0]
+    claimed = store.checkout_task(task["id"], agent["id"], ["todo"], "run-terminal-release", "operator")
+    state = store._read()
+    run = next(item for item in state["runs"] if item["id"] == "run-terminal-release")
+    run.update(
+        {
+            "status": "succeeded",
+            "finished_at": "2026-07-19T00:00:05Z",
+            "duration_ms": 5000,
+            "next_action": "complete",
+            "log": ["done"],
+        }
+    )
+    store._write(state)
+
+    store.release_task(claimed["id"], "operator")
+    released_run = next(item for item in store.snapshot()["runs"] if item["id"] == "run-terminal-release")
+
+    assert released_run["status"] == "succeeded"
+    assert released_run["finished_at"] == "2026-07-19T00:00:05Z"
+    assert released_run["duration_ms"] == 5000
+    assert released_run["next_action"] == "complete"
+    assert released_run["log"] == ["done"]
+
+
+def test_release_task_rejects_missing_checkout_run_without_mutation(tmp_path):
+    store = HadesConsoleStore(tmp_path / "console.json")
+    state = store.snapshot()
+    task = next(item for item in state["tasks"] if item["status"] == "todo")
+    agent = state["agents"][0]
+    claimed = store.checkout_task(task["id"], agent["id"], ["todo"], "run-missing-release", "operator")
+    state = store._read()
+    state["runs"] = [run for run in state["runs"] if run["id"] != "run-missing-release"]
+    store._write(state)
+
+    before = store.snapshot()
+    with pytest.raises(ConsoleError) as error:
+        store.release_task(claimed["id"], "operator")
+    after = store.snapshot()
+
+    assert error.value.status == 409
+    assert error.value.code == "checkout_run_missing"
+    assert next(item for item in after["tasks"] if item["id"] == claimed["id"]) == next(
+        item for item in before["tasks"] if item["id"] == claimed["id"]
+    )
+    assert not any(run["id"] == "run-missing-release" for run in after["runs"])
+    assert len(after["activity"]) == len(before["activity"])
+
+
 def test_validation_rejects_bad_references_and_enums(tmp_path):
     store = HadesConsoleStore(tmp_path / "console.json")
     with pytest.raises(ConsoleError) as error:
@@ -105,6 +183,31 @@ def test_validation_rejects_bad_references_and_enums(tmp_path):
     with pytest.raises(ConsoleError) as error:
         store.update_project(project["id"], {"status": "invalid"}, "operator")
     assert error.value.status == 400
+
+
+def test_task_labels_are_validated_and_normalized(tmp_path):
+    store = HadesConsoleStore(tmp_path / "console.json")
+    project = store.snapshot()["projects"][0]
+
+    created = store.create_task(
+        {"project_id": project["id"], "title": "labels", "labels": [" frontend ", "api"]},
+        "operator",
+    )
+    assert created["labels"] == ["frontend", "api"]
+
+    updated = store.update_task(created["id"], {"labels": [" urgent "]}, "operator")
+    assert updated["labels"] == ["urgent"]
+
+    for labels in ("urgent", {"name": "urgent"}, ["ok", ""], ["ok", 3], ["ok", "   "]):
+        with pytest.raises(ConsoleError) as error:
+            store.create_task({"project_id": project["id"], "title": "bad labels", "labels": labels}, "operator")
+        assert error.value.status == 400
+        assert error.value.code == "invalid_labels"
+
+        with pytest.raises(ConsoleError) as error:
+            store.update_task(created["id"], {"labels": labels}, "operator")
+        assert error.value.status == 400
+        assert error.value.code == "invalid_labels"
 
 
 def test_seed_list_and_update_interfaces(tmp_path):
@@ -251,7 +354,24 @@ def test_seed_uses_canonical_schema_and_enums(tmp_path):
 
 def test_task_lifecycle_rejects_invalid_transitions_and_unowned_in_progress(tmp_path):
     store = HadesConsoleStore(tmp_path / "console.json")
-    task = next(item for item in store.snapshot()["tasks"] if item["status"] == "todo")
+    snapshot = store.snapshot()
+    task = next(item for item in snapshot["tasks"] if item["status"] == "todo")
+    blocked = next(item for item in snapshot["tasks"] if item["status"] == "blocked")
+    project = snapshot["projects"][0]
+    agent = snapshot["agents"][0]
+
+    with pytest.raises(ConsoleError) as error:
+        store.create_task(
+            {
+                "project_id": project["id"],
+                "title": "bad direct start",
+                "status": "in_progress",
+                "assignee_agent_id": agent["id"],
+            },
+            "operator",
+        )
+    assert error.value.status == 409
+    assert error.value.code == "checkout_required"
 
     with pytest.raises(ConsoleError) as error:
         store.update_task(task["id"], {"status": "done"}, "operator")
@@ -261,10 +381,49 @@ def test_task_lifecycle_rejects_invalid_transitions_and_unowned_in_progress(tmp_
     with pytest.raises(ConsoleError) as error:
         store.update_task(task["id"], {"status": "in_progress"}, "operator")
     assert error.value.status == 409
+    assert error.value.code == "checkout_required"
+
+    with pytest.raises(ConsoleError) as error:
+        store.update_task(blocked["id"], {"status": "in_progress"}, "operator")
+    assert error.value.status == 409
+    assert error.value.code == "checkout_required"
 
     with pytest.raises(ConsoleError) as error:
         store.release_task(task["id"], "operator")
     assert error.value.status == 409
+
+
+def test_task_update_can_resume_in_progress_with_active_matching_checkout(tmp_path):
+    store = HadesConsoleStore(tmp_path / "console.json")
+    snapshot = store.snapshot()
+    task = next(item for item in snapshot["tasks"] if item["status"] == "todo")
+    agent = snapshot["agents"][0]
+
+    claimed = store.checkout_task(task["id"], agent["id"], ["todo"], "run-resume", "operator")
+    reviewed = store.update_task(claimed["id"], {"status": "in_review"}, "operator")
+    resumed = store.update_task(
+        reviewed["id"],
+        {
+            "status": "in_progress",
+            "assignee_agent_id": agent["id"],
+            "checkout_run_id": "run-resume",
+        },
+        "operator",
+    )
+
+    assert resumed["status"] == "in_progress"
+    assert resumed["assignee_agent_id"] == agent["id"]
+    assert resumed["checkout_run_id"] == "run-resume"
+
+    with pytest.raises(ConsoleError) as error:
+        store.update_task(resumed["id"], {"assignee_agent_id": "demo-agent-reviewer"}, "operator")
+    assert error.value.status == 409
+    assert error.value.code == "checkout_fields_readonly"
+
+    with pytest.raises(ConsoleError) as error:
+        store.update_task(resumed["id"], {"checkout_run_id": "demo-run-failed"}, "operator")
+    assert error.value.status == 409
+    assert error.value.code == "checkout_fields_readonly"
 
 
 def test_request_revision_and_activity_are_canonical_and_append_only(tmp_path):

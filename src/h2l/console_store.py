@@ -274,7 +274,7 @@ class HadesConsoleStore:
                 "priority": payload.get("priority", "medium"),
                 "assignee_agent_id": payload.get("assignee_agent_id", payload.get("assignee_id")),
                 "checkout_run_id": payload.get("checkout_run_id", payload.get("run_id")),
-                "labels": list(payload.get("labels", [])),
+                "labels": _normalize_labels(payload.get("labels", [])),
                 "source": payload.get("source", "user"),
                 "created_at": now,
                 "updated_at": now,
@@ -283,6 +283,13 @@ class HadesConsoleStore:
             }
             _validate_enum("status", task["status"], TASK_STATUSES)
             _validate_enum("priority", task["priority"], TASK_PRIORITIES)
+            if task["status"] == "in_progress":
+                raise ConsoleError(
+                    "checkout_required",
+                    "Task checkout is required to enter in_progress",
+                    409,
+                    {"from": None, "to": "in_progress"},
+                )
             _ensure_absent(state["tasks"], task["id"], "task")
             self._validate_task_links(state, task)
             self._validate_task_state(task)
@@ -309,6 +316,9 @@ class HadesConsoleStore:
             }
             payload = _canonical_task_payload(payload)
             _validate_keys(payload, allowed)
+            if "labels" in payload:
+                payload["labels"] = _normalize_labels(payload["labels"])
+            _validate_checkout_fields_unchanged(task, payload)
             next_task = dict(task)
             next_task.update(payload)
             _validate_enum("status", next_task["status"], TASK_STATUSES)
@@ -316,6 +326,8 @@ class HadesConsoleStore:
             if next_task["status"] != task["status"]:
                 _validate_task_transition(task["status"], next_task["status"])
             self._validate_task_links(state, next_task)
+            if next_task["status"] == "in_progress":
+                _validate_active_checkout(state, next_task, task["status"])
             self._validate_task_state(next_task)
             if next_task["status"] == "done" and task["status"] != "done":
                 next_task["completed_at"] = next_task.get("completed_at") or _now()
@@ -365,10 +377,26 @@ class HadesConsoleStore:
                     {"status": task["status"], "assignee_agent_id": task.get("assignee_agent_id")},
                 )
             run_id = task.get("checkout_run_id")
+            run = _find(state["runs"], run_id) if run_id else None
+            if not run:
+                raise ConsoleError(
+                    "checkout_run_missing",
+                    f"Task {id} references a missing checkout run",
+                    409,
+                    {"checkout_run_id": run_id},
+                )
+            now = _now()
+            if run["status"] in {"queued", "running"}:
+                started_at = run.get("started_at") or now
+                run["status"] = "cancelled"
+                run["finished_at"] = now
+                run["duration_ms"] = _duration_ms(started_at, now)
+                run["next_action"] = "checkout released"
+                run.setdefault("log", []).append(f"checkout released by {actor}")
             task["status"] = "todo"
             task["assignee_agent_id"] = None
             task["checkout_run_id"] = None
-            task["updated_at"] = _now()
+            task["updated_at"] = now
             self._activity(state, actor, "release_task", "task", id, run_id=run_id)
             self._write(state)
             return _clone(task)
@@ -587,6 +615,51 @@ def _canonical_task_payload(payload):
     return payload
 
 
+def _normalize_labels(labels):
+    if not isinstance(labels, list):
+        raise ConsoleError("invalid_labels", "Task labels must be a list of non-empty strings", 400)
+    normalized = []
+    for label in labels:
+        if not isinstance(label, str):
+            raise ConsoleError("invalid_labels", "Task labels must be a list of non-empty strings", 400)
+        stripped = label.strip()
+        if not stripped:
+            raise ConsoleError("invalid_labels", "Task labels must be a list of non-empty strings", 400)
+        normalized.append(stripped)
+    return normalized
+
+
+def _validate_checkout_fields_unchanged(task, payload):
+    managed_fields = {"assignee_agent_id", "checkout_run_id"}
+    changed = [field for field in sorted(managed_fields & set(payload)) if payload[field] != task.get(field)]
+    if changed:
+        raise ConsoleError(
+            "checkout_fields_readonly",
+            "Task checkout fields can only be changed by checkout/release actions",
+            409,
+            {"fields": changed},
+        )
+
+
+def _validate_active_checkout(state, task, previous_status):
+    run_id = task.get("checkout_run_id")
+    agent_id = task.get("assignee_agent_id")
+    run = _find(state["runs"], run_id) if run_id else None
+    if (
+        not run
+        or not agent_id
+        or run["status"] not in {"queued", "running"}
+        or run["task_id"] != task["id"]
+        or run["agent_id"] != agent_id
+    ):
+        raise ConsoleError(
+            "checkout_required",
+            "Task checkout is required to enter in_progress",
+            409,
+            {"from": previous_status, "to": "in_progress", "run_id": run_id, "assignee_agent_id": agent_id},
+        )
+
+
 def _validate_task_transition(current, target):
     if target not in TASK_TRANSITIONS.get(current, set()):
         raise ConsoleError(
@@ -611,6 +684,16 @@ def _new_id(prefix):
 
 def _now():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _duration_ms(started_at, finished_at):
+    started = _parse_utc(started_at)
+    finished = _parse_utc(finished_at)
+    return max(0, int((finished - started).total_seconds() * 1000))
+
+
+def _parse_utc(value):
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def _required(payload, key):

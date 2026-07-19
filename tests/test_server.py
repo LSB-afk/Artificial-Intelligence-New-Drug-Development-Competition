@@ -290,6 +290,104 @@ def test_task_patch_release_and_checkout_conflict_routes(tmp_path):
     assert released["status"] == "todo"
     assert released["assignee_agent_id"] is None
 
+    runs = _json("/api/runs")[2]
+    run = next(item for item in runs if item["id"] == "run-release-test")
+    assert run["status"] == "cancelled"
+    assert run["finished_at"] is not None
+    assert run["duration_ms"] >= 0
+    assert run["next_action"] == "checkout released"
+
+
+def test_task_patch_cannot_enter_in_progress_without_checkout(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    snapshot = _json("/api/console")[2]
+    project_id = snapshot["projects"][0]["id"]
+    task_id = next(task["id"] for task in snapshot["tasks"] if task["status"] == "todo")
+    agent_id = snapshot["agents"][0]["id"]
+
+    status, _, body = route(
+        "POST",
+        "/api/tasks",
+        {
+            "project_id": project_id,
+            "title": "bad direct start",
+            "status": "in_progress",
+            "assignee_agent_id": agent_id,
+        },
+    )
+    payload = json.loads(body)
+    assert status == 409
+    assert payload["error"] == "checkout_required"
+
+    status, _, body = route("PATCH", f"/api/tasks/{task_id}", {"status": "in_progress"})
+    payload = json.loads(body)
+
+    assert status == 409
+    assert payload["error"] == "checkout_required"
+    assert payload["details"]["from"] == "todo"
+    assert payload["details"]["to"] == "in_progress"
+
+    blocked_id = next(task["id"] for task in snapshot["tasks"] if task["status"] == "blocked")
+    status, _, body = route("PATCH", f"/api/tasks/{blocked_id}", {"status": "in_progress"})
+    payload = json.loads(body)
+    assert status == 409
+    assert payload["error"] == "checkout_required"
+
+
+def test_task_patch_can_resume_with_active_matching_checkout(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    snapshot = _json("/api/console")[2]
+    task_id = next(task["id"] for task in snapshot["tasks"] if task["status"] == "todo")
+    agent_id = snapshot["agents"][0]["id"]
+
+    status, _, _ = route(
+        "POST",
+        f"/api/tasks/{task_id}/checkout",
+        {"agent_id": agent_id, "expected_statuses": ["todo"], "run_id": "run-route-resume"},
+    )
+    assert status == 200
+    status, _, _ = route("PATCH", f"/api/tasks/{task_id}", {"status": "in_review"})
+    assert status == 200
+    status, _, body = route(
+        "PATCH",
+        f"/api/tasks/{task_id}",
+        {"status": "in_progress", "assignee_agent_id": agent_id, "checkout_run_id": "run-route-resume"},
+    )
+    resumed = json.loads(body)
+    assert status == 200
+    assert resumed["status"] == "in_progress"
+
+    status, _, body = route("PATCH", f"/api/tasks/{task_id}", {"checkout_run_id": "demo-run-failed"})
+    payload = json.loads(body)
+    assert status == 409
+    assert payload["error"] == "checkout_fields_readonly"
+
+
+def test_task_routes_validate_labels(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    snapshot = _json("/api/console")[2]
+    project_id = snapshot["projects"][0]["id"]
+    task_id = next(task["id"] for task in snapshot["tasks"] if task["status"] == "todo")
+
+    status, _, body = route("POST", "/api/tasks", {"project_id": project_id, "title": "labels", "labels": [" a "]})
+    assert status == 201
+    assert json.loads(body)["labels"] == ["a"]
+
+    status, _, body = route("PATCH", f"/api/tasks/{task_id}", {"labels": [" backend "]})
+    assert status == 200
+    assert json.loads(body)["labels"] == ["backend"]
+
+    for method, path, body_payload in (
+        ("POST", "/api/tasks", {"project_id": project_id, "title": "bad", "labels": "backend"}),
+        ("POST", "/api/tasks", {"project_id": project_id, "title": "bad", "labels": [""]}),
+        ("PATCH", f"/api/tasks/{task_id}", {"labels": {"name": "backend"}}),
+        ("PATCH", f"/api/tasks/{task_id}", {"labels": ["backend", 3]}),
+    ):
+        status, _, body = route(method, path, body_payload)
+        payload = json.loads(body)
+        assert status == 400
+        assert payload["error"] == "invalid_labels"
+
 
 def test_agent_pause_resume_routes(tmp_path):
     configure_console_store(tmp_path / "hades.json")
