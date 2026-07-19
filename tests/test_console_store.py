@@ -32,6 +32,27 @@ def test_checkout_is_atomic(tmp_path):
     assert error.value.status == 409
 
 
+def test_checkout_rejects_existing_run_id_without_mutation(tmp_path):
+    store = HadesConsoleStore(tmp_path / "console.json")
+    snapshot = store.snapshot()
+    task = next(item for item in snapshot["tasks"] if item["status"] == "todo")
+    agent = snapshot["agents"][0]
+    existing_run = next(item for item in snapshot["runs"] if item["id"] == "demo-run-failed")
+    before_activity = len(snapshot["activity"])
+
+    with pytest.raises(ConsoleError) as error:
+        store.checkout_task(task["id"], agent["id"], ["todo"], existing_run["id"], "operator")
+
+    assert error.value.status == 409
+    after = store.snapshot()
+    unchanged_task = next(item for item in after["tasks"] if item["id"] == task["id"])
+    unchanged_run = next(item for item in after["runs"] if item["id"] == existing_run["id"])
+    assert unchanged_task == task
+    assert unchanged_run == existing_run
+    assert len(after["runs"]) == len(snapshot["runs"])
+    assert len(after["activity"]) == before_activity
+
+
 def test_approval_decision_is_terminal(tmp_path):
     store = HadesConsoleStore(tmp_path / "console.json")
     approval = next(item for item in store.snapshot()["approvals"] if item["status"] == "pending")

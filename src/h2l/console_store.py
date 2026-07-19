@@ -340,14 +340,15 @@ class HadesConsoleStore:
                 raise ConsoleError("task_already_assigned", f"Task {id} is already assigned", 409)
             _validate_task_transition(task["status"], "in_progress")
             self._get(state, "agents", agent_id, "agent")
+            if _find(state["runs"], run_id):
+                raise ConsoleError("run_id_conflict", f"Run already exists: {run_id}", 409, {"run_id": run_id})
             now = _now()
             task["status"] = "in_progress"
             task["assignee_agent_id"] = agent_id
             task["checkout_run_id"] = run_id
             task["started_at"] = task.get("started_at") or now
             task["updated_at"] = now
-            if not _find(state["runs"], run_id):
-                state["runs"].append(_run_record(run_id, task, agent_id, "running", "checkout", now))
+            state["runs"].append(_run_record(run_id, task, agent_id, "running", "checkout", now))
             self._activity(state, actor, "checkout_task", "task", id, run_id=run_id, details={"agent_id": agent_id})
             self._write(state)
             return _clone(task)
