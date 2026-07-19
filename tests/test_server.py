@@ -16,7 +16,7 @@ from contextlib import closing
 import pytest
 
 from h2l.console_store import ConsoleError
-from h2l.server import _Handler, configure_console_store, make_server, route
+from h2l.server import MAX_JSON_BODY, _Handler, configure_console_store, make_server, route
 
 
 def _json(path, method="GET", body=None):
@@ -525,19 +525,18 @@ def test_real_http_json_errors_are_structured(tmp_path):
         else:
             raise AssertionError("non-object JSON request should fail")
 
-        too_large = urllib.request.Request(
-            f"http://127.0.0.1:{port}/api/projects",
-            data=b'{"padding":"' + (b"x" * (1024 * 1024 + 1)) + b'"}',
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        )
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
         try:
-            urllib.request.urlopen(too_large, timeout=5)
-        except urllib.error.HTTPError as error:
-            assert error.code == 413
-            assert json.loads(error.read())["error"] == "payload_too_large"
-        else:
-            raise AssertionError("oversized JSON request should fail")
+            conn.putrequest("POST", "/api/projects")
+            conn.putheader("Content-Type", "application/json")
+            conn.putheader("Content-Length", str(MAX_JSON_BODY + 1))
+            conn.putheader("Expect", "100-continue")
+            conn.endheaders()
+            resp = conn.getresponse()
+            assert resp.status == 413
+            assert json.loads(resp.read())["error"] == "payload_too_large"
+        finally:
+            conn.close()
     finally:
         server.shutdown()
         thread.join(timeout=5)
