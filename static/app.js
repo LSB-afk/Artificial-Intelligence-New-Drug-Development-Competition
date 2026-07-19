@@ -3,6 +3,7 @@
 const state = {
   snapshot: null,
   activeView: "dashboard",
+  taskFilter: "all",
   loading: false,
 };
 
@@ -97,6 +98,12 @@ function nameFor(kind, id, fallback = "미지정") {
   return escapeHtml(item?.name || item?.title || id);
 }
 
+function textFor(kind, id, fallback = "미지정") {
+  if (!id) return fallback;
+  const item = byId(kind, id);
+  return item?.name || item?.title || id;
+}
+
 function statusLabel(value) {
   return escapeHtml(labels[value] || value || "없음");
 }
@@ -113,6 +120,13 @@ function utilizationClass(percent) {
   if (percent >= 100) return "danger";
   if (percent >= 80) return "warning";
   return "approved";
+}
+
+function formatDuration(ms) {
+  if (ms === null || ms === undefined) return "진행 중";
+  const value = Number(ms || 0);
+  if (value < 1000) return `${value}ms`;
+  return `${(value / 1000).toFixed(1)}s`;
 }
 
 async function loadConsole({ focus = false } = {}) {
@@ -239,7 +253,7 @@ function renderDashboard() {
       type: "태스크",
       title: task.title,
       status: task.status,
-      detail: `${nameFor("projects", task.project_id)} / ${task.priority}`,
+      detail: `${textFor("projects", task.project_id)} / ${task.priority}`,
       action: `<button class="secondary-button fit-button" type="button" data-view="tasks">열기</button>`,
     })),
     ...s.approvals.filter((approval) => approval.status === "pending").map((approval) => ({
@@ -253,7 +267,7 @@ function renderDashboard() {
       type: "에이전트",
       title: agent.name,
       status: agent.status,
-      detail: escapeHtml(agent.pause_reason || agent.role),
+      detail: agent.pause_reason || agent.role,
       action: `<button class="secondary-button fit-button" type="button" data-view="agents">확인</button>`,
     })),
   ].slice(0, 8);
@@ -286,7 +300,7 @@ function renderAttention(items) {
       <div>
         <span class="table-kicker">${escapeHtml(item.type)}</span>
         <strong>${escapeHtml(item.title)}</strong>
-        <small>${item.detail}</small>
+        <small>${escapeHtml(item.detail)}</small>
       </div>
       <span class="status-pill ${statusClass(item.status)}">${statusLabel(item.status)}</span>
       ${item.action}
@@ -317,7 +331,20 @@ function renderProjects() {
 }
 
 function renderTasks() {
-  const rows = state.snapshot.tasks.map((task) => [
+  const statuses = ["all", "backlog", "todo", "in_progress", "in_review", "blocked", "done"];
+  const visibleTasks = state.taskFilter === "all"
+    ? state.snapshot.tasks
+    : state.snapshot.tasks.filter((task) => task.status === state.taskFilter);
+  const filter = `
+    <div class="filter-toolbar">
+      <label class="field-label compact-label" for="task-status-filter">상태 필터</label>
+      <select id="task-status-filter" class="document-filter compact-select" data-action="task-filter" aria-label="태스크 상태 필터">
+        ${statuses.map((status) => `<option value="${escapeHtml(status)}"${state.taskFilter === status ? " selected" : ""}>${status === "all" ? "전체" : statusLabel(status)}</option>`).join("")}
+      </select>
+      <span class="filter-summary">${number(visibleTasks.length)} / ${number(state.snapshot.tasks.length)}개 표시</span>
+    </div>
+  `;
+  const rows = visibleTasks.map((task) => [
     `<strong>${escapeHtml(task.title)}</strong><small>${escapeHtml(task.description || "설명 없음")}</small>`,
     nameFor("projects", task.project_id),
     statusPill(task.status),
@@ -328,6 +355,7 @@ function renderTasks() {
   return `
     <section class="view-section">
       ${viewHeader("tasks", "태스크", "생성, 수정, 체크아웃, 릴리스, 라이프사이클 전환을 수행합니다.", `<button class="primary-button fit-button" type="button" data-action="create-task">태스크 생성</button>`)}
+      ${filter}
       ${table(["태스크", "프로젝트", "상태", "우선순위", "담당", "작업"], rows)}
     </section>
   `;
@@ -353,11 +381,13 @@ function taskActions(task) {
 function renderAgents() {
   const rows = state.snapshot.agents.map((agent) => {
     const pct = agent.budget_monthly_cents ? Math.round((agent.spent_monthly_cents / agent.budget_monthly_cents) * 100) : 0;
+    const context = currentAgentContext(agent.id);
     return [
       `<strong>${escapeHtml(agent.name)}</strong><small>${escapeHtml(agent.title || agent.role)}</small>`,
       statusPill(agent.status),
       escapeHtml(agent.role),
       escapeHtml((agent.capabilities || []).join(", ")),
+      `<span>${htmlDate(agent.last_heartbeat_at)}</span><small>${escapeHtml(context)}</small>`,
       `<span class="budget ${utilizationClass(pct)}"><strong>${money(agent.spent_monthly_cents)} / ${money(agent.budget_monthly_cents)}</strong><small>${pct}% 사용</small></span>`,
       rowActions([
         agent.status === "paused" ? actionButton("resume-agent", agent.id, "재개", "secondary") : actionButton("pause-agent", agent.id, "일시정지", "danger"),
@@ -367,9 +397,18 @@ function renderAgents() {
   return `
     <section class="view-section">
       ${viewHeader("agents", "에이전트", "역할, 상태, 하트비트, 예산 사용률을 확인하고 일시정지/재개합니다.")}
-      ${table(["이름", "상태", "역할", "역량", "월 예산", "작업"], rows)}
+      ${table(["이름", "상태", "역할", "역량", "하트비트/현재 작업", "월 예산", "작업"], rows)}
     </section>
   `;
+}
+
+function currentAgentContext(agentId) {
+  const task = state.snapshot.tasks.find((item) => item.assignee_agent_id === agentId && item.status === "in_progress");
+  const run = state.snapshot.runs.find((item) => item.agent_id === agentId && ["queued", "running"].includes(item.status));
+  const parts = [];
+  if (task) parts.push(`task ${task.id}`);
+  if (run) parts.push(`run ${run.id}`);
+  return parts.length ? parts.join(" / ") : "현재 할당 없음";
 }
 
 function renderRuns() {
@@ -378,16 +417,24 @@ function renderRuns() {
     nameFor("tasks", run.task_id),
     nameFor("agents", run.agent_id),
     statusPill(run.status),
+    formatDuration(run.duration_ms),
     `${number(run.usage?.input_tokens)} / ${number(run.usage?.output_tokens)} tokens`,
     `${money(run.cost_cents)}<small>${escapeHtml(run.error || run.result || run.next_action || "이벤트 없음")}</small>`,
+    renderRunLog(run),
     rowActions(["failed", "cancelled"].includes(run.status) ? [actionButton("retry-run", run.id, "재시도", "secondary")] : [disabledButton("재시도 불가", "failed/cancelled 상태만 가능")]),
   ]);
   return `
     <section class="view-section">
       ${viewHeader("runs", "실행 기록", "결과, 오류, 다음 조치, 토큰/비용을 간결한 실행 이벤트로 표시합니다.")}
-      ${table(["Run", "태스크", "에이전트", "상태", "토큰", "비용/이벤트", "작업"], rows)}
+      ${table(["Run", "태스크", "에이전트", "상태", "기간", "토큰", "비용/이벤트", "로그", "작업"], rows)}
     </section>
   `;
+}
+
+function renderRunLog(run) {
+  const events = Array.isArray(run.log) ? run.log.slice(0, 4) : [];
+  if (!events.length) return `<span class="run-log empty-log">로그 없음</span>`;
+  return `<ol class="run-log">${events.map((event) => `<li>${escapeHtml(event)}</li>`).join("")}</ol>`;
 }
 
 function renderCosts() {
@@ -425,7 +472,7 @@ function renderCosts() {
 }
 
 function renderApprovals() {
-  const rows = state.snapshot.approvals.map((approval) => [
+  const rows = sortApprovals(state.snapshot.approvals).map((approval) => [
     `<strong>${escapeHtml(approval.title)}</strong><small>${escapeHtml(approval.type)}</small>`,
     statusPill(approval.status),
     nameFor("agents", approval.requested_by, approval.requested_by || "요청자 없음"),
@@ -443,6 +490,14 @@ function renderApprovals() {
       ${table(["승인", "상태", "요청자", "페이로드", "결정 메모", "작업"], rows)}
     </section>
   `;
+}
+
+function sortApprovals(approvals) {
+  return approvals.slice().sort((a, b) => {
+    if (a.status === "pending" && b.status !== "pending") return -1;
+    if (a.status !== "pending" && b.status === "pending") return 1;
+    return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+  });
 }
 
 function renderActivity() {
@@ -560,7 +615,8 @@ function openDialog({ title, description, body, submitLabel = "저장", danger =
     await submitDialog(form, onSubmit);
   });
   dialog.showModal();
-  form.querySelector("input, select, textarea, button")?.focus();
+  const firstControl = dialog.querySelector(".dialog-body input, .dialog-body select, .dialog-body textarea") || form.querySelector("button");
+  firstControl?.focus();
 }
 
 async function submitDialog(form, onSubmit) {
@@ -570,8 +626,6 @@ async function submitDialog(form, onSubmit) {
   try {
     await onSubmit(form);
     dialog.close();
-    showToast("작업이 저장되었습니다.");
-    await loadConsole({ focus: true });
   } catch (error) {
     const detail = error.payload?.error ? `${error.payload.error}: ${error.message}` : error.message;
     errorBox.textContent = detail;
@@ -766,7 +820,16 @@ async function handleClick(event) {
   }
 }
 
+function handleChange(event) {
+  const control = event.target.closest('[data-action="task-filter"]');
+  if (!control) return;
+  state.taskFilter = control.value;
+  renderActiveView();
+  viewRoot.focus();
+}
+
 document.addEventListener("click", handleClick);
+document.addEventListener("change", handleChange);
 dialog.addEventListener("cancel", () => showToast("작업을 취소했습니다."));
 
 loadConsole();

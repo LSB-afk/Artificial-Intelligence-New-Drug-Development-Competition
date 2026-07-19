@@ -1338,6 +1338,28 @@ button[aria-disabled="true"] {
   box-shadow: var(--panel-shadow);
 }
 
+.filter-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.compact-label {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.compact-select {
+  width: auto;
+  min-width: 180px;
+  margin-top: 0;
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -1379,6 +1401,22 @@ button[aria-disabled="true"] {
   margin-top: 4px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.run-log {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-log li + li {
+  margin-top: 3px;
+}
+
+.empty-log {
+  display: block;
+  padding-left: 0;
 }
 
 .status-pill.approved,
@@ -1586,8 +1624,18 @@ button[aria-disabled="true"] {
 
   .row-actions,
   .header-actions,
-  .view-actions {
+  .view-actions,
+  .filter-toolbar {
     justify-content: stretch;
+  }
+
+  .filter-toolbar {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .compact-select {
+    width: 100%;
   }
 
   .fit-button,

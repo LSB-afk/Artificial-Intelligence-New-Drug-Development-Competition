@@ -67,6 +67,14 @@ def test_static_css_and_js_are_served_with_console_contract():
     assert "showToast" in js_body
     assert 'data-action="' in js_body
     assert 'role="alert"' in js_body
+    assert '<small>${escapeHtml(item.detail)}</small>' in js_body
+    assert "dialog.querySelector(\".dialog-body input, .dialog-body select, .dialog-body textarea\")" in js_body
+    assert 'data-action="task-filter"' in js_body
+    assert 'aria-label="태스크 상태 필터"' in js_body
+    assert "currentAgentContext" in js_body
+    assert "formatDuration" in js_body
+    assert "renderRunLog" in js_body
+    assert "sortApprovals" in js_body
     for endpoint in (
         "/api/projects",
         "/api/tasks",
@@ -78,6 +86,36 @@ def test_static_css_and_js_are_served_with_console_contract():
         "/api/approvals/${id}/${decision}",
     ):
         assert endpoint in js_body
+    for action in (
+        "reload",
+        "create-project",
+        "edit-project",
+        "project-status",
+        "create-task",
+        "edit-task",
+        "task-status",
+        "checkout-task",
+        "release-task",
+        "pause-agent",
+        "resume-agent",
+        "retry-run",
+        "decide-approval",
+    ):
+        assert f'action === "{action}"' in js_body
+
+
+def test_app_js_dialog_and_escaping_contracts_are_static_guarded():
+    status, _, js_body = route("GET", "/static/app.js")
+    assert status == 200
+    submit_start = js_body.index("async function submitDialog")
+    submit_end = js_body.index("function projectForm", submit_start)
+    submit_body = js_body[submit_start:submit_end]
+    assert "await loadConsole" not in submit_body
+    assert "showToast(\"작업이 저장되었습니다.\")" not in submit_body
+    assert "dialog.close();" in submit_body
+    assert "showToast(\"작업이 완료되었습니다.\")" in js_body
+    assert "await loadConsole({ focus: true });" in js_body
+    assert "detail: escapeHtml" not in js_body
 
 
 def test_app_js_declares_all_management_views():
