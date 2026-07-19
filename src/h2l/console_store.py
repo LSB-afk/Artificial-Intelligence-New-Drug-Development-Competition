@@ -1,8 +1,7 @@
 """Atomic JSON store for the Hades management console.
 
-The seeded records are deterministic demo data derived from this repository's
-console and evaluation workflow. They are operational fixtures only, not
-biological or drug-design assertions.
+Seeded records are deterministic repository-derived demo management data. They
+are operational fixtures only, not biological or drug-design assertions.
 """
 from __future__ import annotations
 
@@ -15,11 +14,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-PROJECT_STATUSES = {"active", "paused", "completed", "archived"}
-TASK_STATUSES = {"todo", "in_progress", "blocked", "done", "cancelled"}
+PROJECT_STATUSES = {"planned", "active", "paused", "completed", "cancelled"}
+TASK_STATUSES = {"backlog", "todo", "in_progress", "in_review", "blocked", "done"}
 TASK_PRIORITIES = {"low", "medium", "high", "critical"}
-AGENT_STATUSES = {"idle", "busy", "offline", "blocked"}
-APPROVAL_ACTIONS = {"approve": "approved", "reject": "rejected"}
+AGENT_STATUSES = {"idle", "running", "paused", "error", "terminated"}
+RUN_STATUSES = {"queued", "running", "succeeded", "failed", "cancelled"}
+APPROVAL_ACTIONS = {
+    "approve": ("approved", "approve_approval"),
+    "reject": ("rejected", "reject_approval"),
+    "request-revision": ("revision_requested", "request_revision_approval"),
+}
+TASK_TRANSITIONS = {
+    "backlog": {"todo"},
+    "todo": {"in_progress"},
+    "in_progress": {"in_review", "blocked"},
+    "blocked": {"in_progress"},
+    "in_review": {"in_progress", "done"},
+    "done": set(),
+}
 
 
 class ConsoleError(ValueError):
@@ -34,18 +46,20 @@ class ConsoleError(ValueError):
 def seed_console_data() -> dict:
     seeded_at = "2026-07-19T00:00:00Z"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "projects": [
             {
                 "id": "demo-project-hades-console",
                 "name": "Hades Console",
-                "status": "active",
                 "description": "Demo repository operations console for deterministic harness management.",
+                "status": "active",
+                "goal": "Coordinate repository console work without changing scientific decisions.",
+                "target_date": "2026-07-31",
+                "lead_agent_id": "demo-agent-runner",
+                "color": "#0f766e",
                 "source": "demo",
                 "created_at": seeded_at,
                 "updated_at": seeded_at,
-                "created_by": "seed",
-                "updated_by": "seed",
             }
         ],
         "tasks": [
@@ -53,99 +67,134 @@ def seed_console_data() -> dict:
                 "id": "demo-task-static-shell",
                 "project_id": "demo-project-hades-console",
                 "title": "정적 콘솔 셸 검증",
+                "description": "Demo task for validating the static app shell.",
                 "status": "todo",
                 "priority": "high",
-                "assignee_id": None,
-                "run_id": None,
+                "assignee_agent_id": None,
+                "checkout_run_id": None,
+                "labels": ["demo", "repository"],
                 "source": "demo",
                 "created_at": seeded_at,
                 "updated_at": seeded_at,
-                "created_by": "seed",
-                "updated_by": "seed",
+                "started_at": None,
+                "completed_at": None,
             },
             {
                 "id": "demo-task-registry-replay",
                 "project_id": "demo-project-hades-console",
                 "title": "오프라인 레지스트리 리플레이 확인",
+                "description": "Demo task showing a failed repository replay awaiting retry.",
                 "status": "blocked",
                 "priority": "medium",
-                "assignee_id": "demo-agent-reviewer",
-                "run_id": "demo-run-failed",
+                "assignee_agent_id": "demo-agent-reviewer",
+                "checkout_run_id": "demo-run-failed",
+                "labels": ["demo", "repository"],
                 "source": "demo",
                 "created_at": seeded_at,
                 "updated_at": seeded_at,
-                "created_by": "seed",
-                "updated_by": "seed",
+                "started_at": seeded_at,
+                "completed_at": None,
             },
         ],
         "agents": [
             {
                 "id": "demo-agent-runner",
                 "name": "Demo Runner",
+                "role": "executor",
+                "title": "Repository task runner",
                 "status": "idle",
-                "reason": "seeded",
+                "capabilities": ["tests", "static-console"],
+                "reports_to": None,
+                "budget_monthly_cents": 50000,
+                "spent_monthly_cents": 125,
+                "last_heartbeat_at": seeded_at,
+                "pause_reason": None,
                 "source": "demo",
+                "created_at": seeded_at,
                 "updated_at": seeded_at,
-                "updated_by": "seed",
             },
             {
                 "id": "demo-agent-reviewer",
                 "name": "Demo Reviewer",
-                "status": "blocked",
-                "reason": "seeded failed run awaiting retry",
+                "role": "reviewer",
+                "title": "Repository review lane",
+                "status": "error",
+                "capabilities": ["review", "replay"],
+                "reports_to": "demo-agent-runner",
+                "budget_monthly_cents": 25000,
+                "spent_monthly_cents": 0,
+                "last_heartbeat_at": seeded_at,
+                "pause_reason": "seeded failed run awaiting retry",
                 "source": "demo",
+                "created_at": seeded_at,
                 "updated_at": seeded_at,
-                "updated_by": "seed",
             },
         ],
         "runs": [
             {
                 "id": "demo-run-failed",
                 "task_id": "demo-task-registry-replay",
+                "project_id": "demo-project-hades-console",
                 "agent_id": "demo-agent-reviewer",
                 "status": "failed",
-                "retry_of": None,
+                "invocation_source": "demo",
+                "started_at": seeded_at,
+                "finished_at": seeded_at,
+                "duration_ms": 1250,
+                "result": None,
+                "error": "Demo repository replay failed fixture.",
+                "next_action": "retry",
+                "usage": {"input_tokens": 1000, "cached_input_tokens": 250, "output_tokens": 500},
+                "cost_cents": 125,
+                "log": ["demo replay started", "demo replay failed"],
+                "retry_of_run_id": None,
                 "source": "demo",
-                "created_at": seeded_at,
-                "updated_at": seeded_at,
-                "created_by": "seed",
-                "updated_by": "seed",
             }
         ],
         "approvals": [
             {
                 "id": "demo-approval-console-scope",
-                "project_id": "demo-project-hades-console",
-                "task_id": "demo-task-static-shell",
+                "type": "deployment",
+                "title": "Hades Console operational scope",
                 "status": "pending",
-                "note": "Demo approval for repository console management scope.",
+                "requested_by": "demo-agent-runner",
+                "payload": {"project_id": "demo-project-hades-console", "scope": "repository management demo"},
+                "decision_note": None,
+                "decided_by": None,
+                "decided_at": None,
                 "source": "demo",
                 "created_at": seeded_at,
                 "updated_at": seeded_at,
-                "created_by": "seed",
-                "updated_by": "seed",
             }
         ],
         "cost_events": [
             {
                 "id": "demo-cost-console-bootstrap",
+                "agent_id": "demo-agent-runner",
+                "task_id": "demo-task-registry-replay",
                 "project_id": "demo-project-hades-console",
                 "run_id": "demo-run-failed",
-                "amount_usd": 1.25,
+                "provider": "demo",
+                "model": "repository-fixture",
+                "input_tokens": 1000,
+                "cached_input_tokens": 250,
+                "output_tokens": 500,
+                "cost_cents": 125,
                 "source": "demo",
-                "created_at": seeded_at,
+                "occurred_at": seeded_at,
             }
         ],
-        "audit_events": [
+        "activity": [
             {
-                "id": "demo-audit-seed",
-                "actor": "seed",
+                "id": "demo-activity-seed",
+                "actor_type": "system",
+                "actor_id": "seed",
                 "action": "seed",
-                "entity_kind": "store",
+                "entity_type": "store",
                 "entity_id": "demo",
-                "occurred_at": seeded_at,
-                "source": "demo",
-                "details": {"schema_version": 1},
+                "run_id": None,
+                "details": {"schema_version": 2, "source": "demo"},
+                "created_at": seeded_at,
             }
         ],
     }
@@ -175,22 +224,24 @@ class HadesConsoleStore:
         with self._lock:
             state = self._read()
             now = _now()
-            status = payload.get("status", "active")
-            _validate_enum("status", status, PROJECT_STATUSES)
             project = {
                 "id": payload.get("id") or _new_id("project"),
                 "name": _required(payload, "name"),
-                "status": status,
                 "description": payload.get("description", ""),
+                "status": payload.get("status", "planned"),
+                "goal": payload.get("goal", ""),
+                "target_date": payload.get("target_date"),
+                "lead_agent_id": payload.get("lead_agent_id"),
+                "color": payload.get("color", "#0f766e"),
                 "source": payload.get("source", "user"),
                 "created_at": now,
                 "updated_at": now,
-                "created_by": actor,
-                "updated_by": actor,
             }
+            _validate_enum("status", project["status"], PROJECT_STATUSES)
             _ensure_absent(state["projects"], project["id"], "project")
+            self._validate_project_links(state, project)
             state["projects"].append(project)
-            self._audit(state, actor, "create_project", "project", project["id"])
+            self._activity(state, actor, "create_project", "project", project["id"])
             self._write(state)
             return _clone(project)
 
@@ -198,47 +249,45 @@ class HadesConsoleStore:
         with self._lock:
             state = self._read()
             project = self._get(state, "projects", id, "project")
-            allowed = {"name", "status", "description"}
+            allowed = {"name", "description", "status", "goal", "target_date", "lead_agent_id", "color"}
             _validate_keys(payload, allowed)
-            if "status" in payload:
-                _validate_enum("status", payload["status"], PROJECT_STATUSES)
-            for key in allowed:
-                if key in payload:
-                    project[key] = payload[key]
+            next_project = dict(project)
+            next_project.update(payload)
+            _validate_enum("status", next_project["status"], PROJECT_STATUSES)
+            self._validate_project_links(state, next_project)
+            project.update(next_project)
             project["updated_at"] = _now()
-            project["updated_by"] = actor
-            self._audit(state, actor, "update_project", "project", id)
+            self._activity(state, actor, "update_project", "project", id)
             self._write(state)
             return _clone(project)
 
     def create_task(self, payload, actor):
         with self._lock:
             state = self._read()
-            project_id = _required(payload, "project_id")
-            self._get(state, "projects", project_id, "project")
-            status = payload.get("status", "todo")
-            priority = payload.get("priority", "medium")
-            _validate_enum("status", status, TASK_STATUSES)
-            _validate_enum("priority", priority, TASK_PRIORITIES)
             now = _now()
             task = {
                 "id": payload.get("id") or _new_id("task"),
-                "project_id": project_id,
+                "project_id": _required(payload, "project_id"),
                 "title": _required(payload, "title"),
-                "status": status,
-                "priority": priority,
-                "assignee_id": payload.get("assignee_id"),
-                "run_id": payload.get("run_id"),
+                "description": payload.get("description", ""),
+                "status": payload.get("status", "backlog"),
+                "priority": payload.get("priority", "medium"),
+                "assignee_agent_id": payload.get("assignee_agent_id", payload.get("assignee_id")),
+                "checkout_run_id": payload.get("checkout_run_id", payload.get("run_id")),
+                "labels": list(payload.get("labels", [])),
                 "source": payload.get("source", "user"),
                 "created_at": now,
                 "updated_at": now,
-                "created_by": actor,
-                "updated_by": actor,
+                "started_at": payload.get("started_at"),
+                "completed_at": payload.get("completed_at"),
             }
+            _validate_enum("status", task["status"], TASK_STATUSES)
+            _validate_enum("priority", task["priority"], TASK_PRIORITIES)
             _ensure_absent(state["tasks"], task["id"], "task")
             self._validate_task_links(state, task)
+            self._validate_task_state(task)
             state["tasks"].append(task)
-            self._audit(state, actor, "create_task", "task", task["id"])
+            self._activity(state, actor, "create_task", "task", task["id"])
             self._write(state)
             return _clone(task)
 
@@ -246,19 +295,33 @@ class HadesConsoleStore:
         with self._lock:
             state = self._read()
             task = self._get(state, "tasks", id, "task")
-            allowed = {"project_id", "title", "status", "priority", "assignee_id", "run_id"}
+            allowed = {
+                "project_id",
+                "title",
+                "description",
+                "status",
+                "priority",
+                "assignee_agent_id",
+                "checkout_run_id",
+                "labels",
+                "started_at",
+                "completed_at",
+            }
+            payload = _canonical_task_payload(payload)
             _validate_keys(payload, allowed)
             next_task = dict(task)
-            for key in allowed:
-                if key in payload:
-                    next_task[key] = payload[key]
+            next_task.update(payload)
             _validate_enum("status", next_task["status"], TASK_STATUSES)
             _validate_enum("priority", next_task["priority"], TASK_PRIORITIES)
+            if next_task["status"] != task["status"]:
+                _validate_task_transition(task["status"], next_task["status"])
             self._validate_task_links(state, next_task)
+            self._validate_task_state(next_task)
+            if next_task["status"] == "done" and task["status"] != "done":
+                next_task["completed_at"] = next_task.get("completed_at") or _now()
             task.update(next_task)
             task["updated_at"] = _now()
-            task["updated_by"] = actor
-            self._audit(state, actor, "update_task", "task", id)
+            self._activity(state, actor, "update_task", "task", id, run_id=task.get("checkout_run_id"))
             self._write(state)
             return _clone(task)
 
@@ -273,31 +336,19 @@ class HadesConsoleStore:
                     409,
                     {"expected_statuses": list(expected_statuses), "actual_status": task["status"]},
                 )
-            if task.get("assignee_id") and task["assignee_id"] != agent_id:
+            if task.get("assignee_agent_id") and task["assignee_agent_id"] != agent_id:
                 raise ConsoleError("task_already_assigned", f"Task {id} is already assigned", 409)
+            _validate_task_transition(task["status"], "in_progress")
             self._get(state, "agents", agent_id, "agent")
             now = _now()
             task["status"] = "in_progress"
-            task["assignee_id"] = agent_id
-            task["run_id"] = run_id
+            task["assignee_agent_id"] = agent_id
+            task["checkout_run_id"] = run_id
+            task["started_at"] = task.get("started_at") or now
             task["updated_at"] = now
-            task["updated_by"] = actor
             if not _find(state["runs"], run_id):
-                state["runs"].append(
-                    {
-                        "id": run_id,
-                        "task_id": id,
-                        "agent_id": agent_id,
-                        "status": "running",
-                        "retry_of": None,
-                        "source": "user",
-                        "created_at": now,
-                        "updated_at": now,
-                        "created_by": actor,
-                        "updated_by": actor,
-                    }
-                )
-            self._audit(state, actor, "checkout_task", "task", id, {"agent_id": agent_id, "run_id": run_id})
+                state["runs"].append(_run_record(run_id, task, agent_id, "running", "checkout", now))
+            self._activity(state, actor, "checkout_task", "task", id, run_id=run_id, details={"agent_id": agent_id})
             self._write(state)
             return _clone(task)
 
@@ -305,12 +356,19 @@ class HadesConsoleStore:
         with self._lock:
             state = self._read()
             task = self._get(state, "tasks", id, "task")
+            if task["status"] != "in_progress" or not task.get("assignee_agent_id"):
+                raise ConsoleError(
+                    "task_not_releasable",
+                    f"Task {id} must be in_progress and assigned before release",
+                    409,
+                    {"status": task["status"], "assignee_agent_id": task.get("assignee_agent_id")},
+                )
+            run_id = task.get("checkout_run_id")
             task["status"] = "todo"
-            task["assignee_id"] = None
-            task["run_id"] = None
+            task["assignee_agent_id"] = None
+            task["checkout_run_id"] = None
             task["updated_at"] = _now()
-            task["updated_by"] = actor
-            self._audit(state, actor, "release_task", "task", id)
+            self._activity(state, actor, "release_task", "task", id, run_id=run_id)
             self._write(state)
             return _clone(task)
 
@@ -320,10 +378,10 @@ class HadesConsoleStore:
             agent = self._get(state, "agents", id, "agent")
             _validate_enum("status", status, AGENT_STATUSES)
             agent["status"] = status
-            agent["reason"] = reason
-            agent["updated_at"] = _now()
-            agent["updated_by"] = actor
-            self._audit(state, actor, "set_agent_status", "agent", id, {"status": status})
+            agent["pause_reason"] = reason if status in {"paused", "error"} else None
+            agent["last_heartbeat_at"] = _now()
+            agent["updated_at"] = agent["last_heartbeat_at"]
+            self._activity(state, actor, "set_agent_status", "agent", id, details={"status": status})
             self._write(state)
             return _clone(agent)
 
@@ -334,23 +392,17 @@ class HadesConsoleStore:
             if run["status"] not in {"failed", "cancelled"}:
                 raise ConsoleError("run_not_retryable", f"Run {id} is not retryable", 409, {"status": run["status"]})
             now = _now()
-            retry = {
-                "id": _new_id("run"),
-                "task_id": run["task_id"],
-                "agent_id": run.get("agent_id"),
-                "status": "queued",
-                "retry_of": id,
-                "source": "user",
-                "created_at": now,
-                "updated_at": now,
-                "created_by": actor,
-                "updated_by": actor,
-            }
-            run["status"] = "retried"
-            run["updated_at"] = now
-            run["updated_by"] = actor
+            retry = _run_record(
+                _new_id("run"),
+                {"id": run["task_id"], "project_id": run["project_id"]},
+                run["agent_id"],
+                "queued",
+                "retry",
+                now,
+                retry_of_run_id=id,
+            )
             state["runs"].append(retry)
-            self._audit(state, actor, "retry_run", "run", id, {"retry_run_id": retry["id"]})
+            self._activity(state, actor, "retry_run", "run", retry["id"], details={"retry_of_run_id": id})
             self._write(state)
             return _clone(retry)
 
@@ -367,13 +419,14 @@ class HadesConsoleStore:
                 )
             if action not in APPROVAL_ACTIONS:
                 raise ConsoleError("invalid_approval_action", f"Invalid approval action: {action}", 400)
-            approval["status"] = APPROVAL_ACTIONS[action]
-            approval["note"] = note
+            status, activity_action = APPROVAL_ACTIONS[action]
+            now = _now()
+            approval["status"] = status
+            approval["decision_note"] = note
             approval["decided_by"] = actor
-            approval["decided_at"] = _now()
-            approval["updated_at"] = approval["decided_at"]
-            approval["updated_by"] = actor
-            self._audit(state, actor, f"{action}_approval", "approval", id)
+            approval["decided_at"] = now
+            approval["updated_at"] = now
+            self._activity(state, actor, activity_action, "approval", id)
             self._write(state)
             return _clone(approval)
 
@@ -405,24 +458,33 @@ class HadesConsoleStore:
             raise ConsoleError(f"{label}_not_found", f"{label.title()} not found: {id}", 404)
         return item
 
+    def _validate_project_links(self, state, project):
+        if project.get("lead_agent_id") is not None:
+            self._get(state, "agents", project["lead_agent_id"], "agent")
+
     def _validate_task_links(self, state, task):
         self._get(state, "projects", task["project_id"], "project")
-        if task.get("assignee_id") is not None:
-            self._get(state, "agents", task["assignee_id"], "agent")
-        if task.get("run_id") is not None:
-            self._get(state, "runs", task["run_id"], "run")
+        if task.get("assignee_agent_id") is not None:
+            self._get(state, "agents", task["assignee_agent_id"], "agent")
+        if task.get("checkout_run_id") is not None:
+            self._get(state, "runs", task["checkout_run_id"], "run")
 
-    def _audit(self, state, actor, action, entity_kind, entity_id, details=None):
-        state["audit_events"].append(
+    def _validate_task_state(self, task):
+        if task["status"] == "in_progress" and not task.get("assignee_agent_id"):
+            raise ConsoleError("task_missing_assignee", "in_progress task requires an assigned agent", 409)
+
+    def _activity(self, state, actor, action, entity_type, entity_id, run_id=None, details=None):
+        state["activity"].append(
             {
-                "id": _new_id("audit"),
-                "actor": actor,
+                "id": _new_id("activity"),
+                "actor_type": "user",
+                "actor_id": actor,
                 "action": action,
-                "entity_kind": entity_kind,
+                "entity_type": entity_type,
                 "entity_id": entity_id,
-                "occurred_at": _now(),
-                "source": "user",
+                "run_id": run_id,
                 "details": details or {},
+                "created_at": _now(),
             }
         )
 
@@ -432,20 +494,106 @@ class HadesConsoleStore:
             "task_count": len(state["tasks"]),
             "todo_task_count": len([task for task in state["tasks"] if task["status"] == "todo"]),
             "pending_approval_count": len([item for item in state["approvals"] if item["status"] == "pending"]),
-            "active_agent_count": len([agent for agent in state["agents"] if agent["status"] in {"idle", "busy"}]),
+            "active_agent_count": len([agent for agent in state["agents"] if agent["status"] in {"idle", "running"}]),
         }
 
     def _cost_summary(self, state):
+        by_agent = {}
         by_project = {}
+        totals = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0, "cost_cents": 0}
         for event in state.get("cost_events", []):
-            project_id = event.get("project_id")
-            by_project[project_id] = round(by_project.get(project_id, 0.0) + float(event.get("amount_usd", 0.0)), 6)
+            input_tokens = int(event.get("input_tokens", 0))
+            cached_tokens = int(event.get("cached_input_tokens", 0))
+            output_tokens = int(event.get("output_tokens", 0))
+            cost_cents = int(event.get("cost_cents", 0))
+            totals["input_tokens"] += input_tokens
+            totals["cached_input_tokens"] += cached_tokens
+            totals["output_tokens"] += output_tokens
+            totals["cost_cents"] += cost_cents
+            _add_cost_bucket(by_agent, event["agent_id"], input_tokens, cached_tokens, output_tokens, cost_cents)
+            _add_cost_bucket(by_project, event["project_id"], input_tokens, cached_tokens, output_tokens, cost_cents)
+
+        budget_cents = sum(int(agent.get("budget_monthly_cents", 0)) for agent in state["agents"])
+        spent_cents = sum(int(agent.get("spent_monthly_cents", 0)) for agent in state["agents"])
+        total_tokens = totals["input_tokens"] + totals["cached_input_tokens"] + totals["output_tokens"]
         return {
             "currency": "USD",
-            "total_usd": round(sum(by_project.values()), 6),
-            "by_project": by_project,
+            "total_cost_cents": totals["cost_cents"],
+            "total_tokens": total_tokens,
+            "input_tokens": totals["input_tokens"],
+            "cached_input_tokens": totals["cached_input_tokens"],
+            "output_tokens": totals["output_tokens"],
             "event_count": len(state.get("cost_events", [])),
+            "utilization": {
+                "budget_cents": budget_cents,
+                "spent_cents": spent_cents,
+                "remaining_cents": budget_cents - spent_cents,
+                "utilization_pct": round((spent_cents / budget_cents) * 100, 2) if budget_cents else 0,
+            },
+            "by_agent": by_agent,
+            "by_project": by_project,
         }
+
+
+def _run_record(id, task, agent_id, status, invocation_source, now, retry_of_run_id=None):
+    return {
+        "id": id,
+        "task_id": task["id"],
+        "project_id": task["project_id"],
+        "agent_id": agent_id,
+        "status": status,
+        "invocation_source": invocation_source,
+        "started_at": now if status == "running" else None,
+        "finished_at": None,
+        "duration_ms": None,
+        "result": None,
+        "error": None,
+        "next_action": None,
+        "usage": {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0},
+        "cost_cents": 0,
+        "log": [],
+        "retry_of_run_id": retry_of_run_id,
+        "source": "user",
+    }
+
+
+def _add_cost_bucket(buckets, id, input_tokens, cached_tokens, output_tokens, cost_cents):
+    bucket = buckets.setdefault(
+        id,
+        {
+            "input_tokens": 0,
+            "cached_input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cost_cents": 0,
+            "event_count": 0,
+        },
+    )
+    bucket["input_tokens"] += input_tokens
+    bucket["cached_input_tokens"] += cached_tokens
+    bucket["output_tokens"] += output_tokens
+    bucket["total_tokens"] += input_tokens + cached_tokens + output_tokens
+    bucket["cost_cents"] += cost_cents
+    bucket["event_count"] += 1
+
+
+def _canonical_task_payload(payload):
+    payload = dict(payload)
+    if "assignee_id" in payload:
+        payload["assignee_agent_id"] = payload.pop("assignee_id")
+    if "run_id" in payload:
+        payload["checkout_run_id"] = payload.pop("run_id")
+    return payload
+
+
+def _validate_task_transition(current, target):
+    if target not in TASK_TRANSITIONS.get(current, set()):
+        raise ConsoleError(
+            "invalid_task_transition",
+            f"Cannot transition task from {current} to {target}",
+            409,
+            {"from": current, "to": target},
+        )
 
 
 def _clone(value):
