@@ -2,12 +2,13 @@
 
 ## Context
 
-The repository is clean at local commit `5c0a1a6`, one commit ahead of
-`origin/main` (`25c622e`) after a fresh fetch on 2026-07-19. The local commit
-contains a deterministic decision harness, a stdlib HTTP server, and the CSS
-for a read-only console. The HTML and JavaScript application files are missing.
-The baseline test run has 49 tests: 46 pass, two fail because the static shell
-is missing, and one socket test is blocked by the execution sandbox.
+At design start, the repository was clean at local commit `5c0a1a6`, one
+commit ahead of `origin/main` (`25c622e`) after a fresh fetch on 2026-07-19.
+That local commit contained a deterministic decision harness, a stdlib HTTP
+server, and the CSS for a read-only console. The HTML and JavaScript
+application files were missing. The baseline test run had 49 tests: 46 passed,
+two failed because the static shell was missing, and one socket test was
+blocked by the execution sandbox.
 
 This design adds a general software-operations control plane. It does not make
 biological decisions, generate or optimize molecules, design synthesis routes,
