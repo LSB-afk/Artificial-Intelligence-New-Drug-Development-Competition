@@ -310,6 +310,34 @@ def test_management_route_wrong_method_matrix_returns_405(tmp_path):
         assert {"message", "details"}.issubset(payload)
 
 
+def test_management_action_routes_wrong_method_get_returns_405(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    snapshot = _json("/api/console")[2]
+    task_id = snapshot["tasks"][0]["id"]
+    agent_id = snapshot["agents"][0]["id"]
+    run_id = snapshot["runs"][0]["id"]
+    approval_id = snapshot["approvals"][0]["id"]
+
+    paths = [
+        f"/api/tasks/{task_id}/checkout",
+        f"/api/tasks/{task_id}/release",
+        f"/api/agents/{agent_id}/pause",
+        f"/api/agents/{agent_id}/resume",
+        f"/api/runs/{run_id}/retry",
+        f"/api/approvals/{approval_id}/approve",
+        f"/api/approvals/{approval_id}/reject",
+        f"/api/approvals/{approval_id}/request-revision",
+    ]
+
+    for path in paths:
+        status, ctype, body = route("GET", path)
+        payload = json.loads(body)
+        assert status == 405, (path, payload)
+        assert "application/json" in ctype
+        assert payload["error"] == "method_not_allowed"
+        assert {"message", "details"}.issubset(payload)
+
+
 def test_checkout_rejects_invalid_expected_statuses_payloads(tmp_path):
     configure_console_store(tmp_path / "hades.json")
     snapshot = _json("/api/console")[2]

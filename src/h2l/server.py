@@ -230,6 +230,9 @@ def _route_console(method: str, clean: str, body) -> tuple[int, str, str] | None
 
     store = _console_store()
 
+    if _is_known_management_wrong_method(method, clean):
+        raise ConsoleError("method_not_allowed", f"Method {method} is not allowed for {clean}", 405, {"method": method})
+
     if method == "GET":
         if clean == "/api/console":
             return _ok(store.snapshot())
@@ -241,8 +244,6 @@ def _route_console(method: str, clean: str, body) -> tuple[int, str, str] | None
 
     if method not in {"POST", "PATCH"}:
         raise ConsoleError("method_not_allowed", f"Method {method} is not allowed for {clean}", 405, {"method": method})
-    if _is_known_management_wrong_method(method, clean):
-        raise ConsoleError("method_not_allowed", f"Method {method} is not allowed for {clean}", 405, {"method": method})
     payload = _payload_object(body)
     actor = _pop_actor(payload)
     return _mutate_console(store, method, clean, payload, actor)
@@ -251,11 +252,11 @@ def _route_console(method: str, clean: str, body) -> tuple[int, str, str] | None
 def _is_known_management_wrong_method(method: str, clean: str) -> bool:
     segments = [segment for segment in clean.split("/") if segment]
     if clean in {"/api/console", "/api/costs"}:
-        return True
+        return method != "GET"
     if clean in {"/api/projects", "/api/tasks"}:
-        return method != "POST"
+        return method not in {"GET", "POST"}
     if clean in {"/api/agents", "/api/runs", "/api/approvals", "/api/activity"}:
-        return True
+        return method != "GET"
     if len(segments) == 3 and segments[:2] in (["api", "projects"], ["api", "tasks"]):
         return method != "PATCH"
     action_routes = {
