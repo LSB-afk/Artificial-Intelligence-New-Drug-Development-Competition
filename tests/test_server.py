@@ -76,7 +76,10 @@ def test_static_css_and_js_are_served_with_console_contract():
     assert 'data-action="' in js_body
     assert 'role="alert"' in js_body
     assert '<small>${escapeHtml(item.detail)}</small>' in js_body
-    assert "dialog.querySelector(\".dialog-body input, .dialog-body select, .dialog-body textarea\")" in js_body
+    assert (
+        'dialog.querySelector(".dialog-body input:not([type=\\"hidden\\"]), '
+        '.dialog-body select, .dialog-body textarea")'
+    ) in js_body
     assert 'data-action="task-filter"' in js_body
     assert 'aria-label="태스크 상태 필터"' in js_body
     assert "currentAgentContext" in js_body
@@ -149,11 +152,17 @@ def test_blocked_task_resume_uses_checkout_dialog_and_creates_a_new_run():
 
 def test_checkout_form_locks_existing_assignee_but_selects_for_unassigned_tasks():
     checkout_form = _app_js_function("checkoutForm", "mutate")
+    open_dialog = _app_js_function("openDialog", "submitDialog")
     assert "const assigneeControl = task.assignee_agent_id" in checkout_form
     assert '현재 담당 에이전트: ${nameFor("agents", task.assignee_agent_id)}' in checkout_form
     assert 'type="hidden" name="agent_id" value="${escapeHtml(task.assignee_agent_id)}"' in checkout_form
     assert '<select name="agent_id" required>' in checkout_form
     assert "${assigneeControl}" in checkout_form
+    assert checkout_form.index('type="hidden" name="agent_id"') < checkout_form.index('name="run_id" required')
+    assert (
+        'dialog.querySelector(".dialog-body input:not([type=\\"hidden\\"]), '
+        '.dialog-body select, .dialog-body textarea")'
+    ) in open_dialog
 
 
 def test_task_create_form_only_offers_initial_statuses():

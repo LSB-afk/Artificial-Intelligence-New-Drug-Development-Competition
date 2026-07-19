@@ -629,7 +629,7 @@ function openDialog({ title, description, body, submitLabel = "저장", danger =
     await submitDialog(form, onSubmit);
   });
   dialog.showModal();
-  const firstControl = dialog.querySelector(".dialog-body input, .dialog-body select, .dialog-body textarea") || form.querySelector("button");
+  const firstControl = dialog.querySelector(".dialog-body input:not([type=\"hidden\"]), .dialog-body select, .dialog-body textarea") || form.querySelector("button");
   firstControl?.focus();
 }
 
