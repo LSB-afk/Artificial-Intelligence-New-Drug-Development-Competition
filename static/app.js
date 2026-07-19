@@ -361,6 +361,18 @@ function renderTasks() {
   `;
 }
 
+function hasActiveCheckout(task) {
+  const run = state.snapshot.runs.find((item) => item.id === task.checkout_run_id);
+  return Boolean(
+    task.assignee_agent_id
+    && run
+    && ["queued", "running"].includes(run.status)
+    && run.task_id === task.id
+    && run.agent_id === task.assignee_agent_id
+    && run.project_id === task.project_id
+  );
+}
+
 function taskActions(task) {
   const actions = [actionButton("edit-task", task.id, "수정", "secondary")];
   if (task.status === "todo") actions.push(actionButton("checkout-task", task.id, "체크아웃", "primary"));
@@ -369,9 +381,11 @@ function taskActions(task) {
     actions.push(actionButton("task-status", task.id, "차단", "danger", "blocked"));
     actions.push(actionButton("release-task", task.id, "릴리스", "ghost"));
   }
-  if (task.status === "blocked") actions.push(actionButton("task-status", task.id, "재개", "secondary", "in_progress"));
-  if (task.status === "in_review") {
+  if (task.status === "blocked") actions.push(actionButton("checkout-task", task.id, "재개 체크아웃", "primary"));
+  if (task.status === "in_review" && hasActiveCheckout(task)) {
     actions.push(actionButton("task-status", task.id, "수정", "ghost", "in_progress"));
+    actions.push(actionButton("task-status", task.id, "완료", "secondary", "done"));
+  } else if (task.status === "in_review") {
     actions.push(actionButton("task-status", task.id, "완료", "secondary", "done"));
   }
   if (task.status === "backlog") actions.push(actionButton("task-status", task.id, "대기 전환", "secondary", "todo"));
@@ -645,14 +659,44 @@ function projectForm(project = {}) {
   `;
 }
 
-function taskForm(task = {}) {
+function taskProjectControl(task, mode) {
+  if (mode === "edit" && task.checkout_run_id) {
+    return `
+      <p class="dialog-context">현재 프로젝트: ${nameFor("projects", task.project_id)}</p>
+      <input type="hidden" name="project_id" value="${escapeHtml(task.project_id)}">
+    `;
+  }
+  return `<label class="field-label">프로젝트<select name="project_id" required>${selectOptions(state.snapshot.projects, task.project_id, "프로젝트 선택")}</select></label>`;
+}
+
+function taskStatusOptions(task, mode = "edit") {
+  if (mode === "create") return ["backlog", "todo"];
+  const byStatus = {
+    backlog: ["backlog", "todo"],
+    todo: ["todo"],
+    in_progress: ["in_progress", "in_review", "blocked"],
+    in_review: ["in_review", "done"],
+    blocked: ["blocked"],
+    done: ["done"],
+  };
+  const options = [...(byStatus[task.status] || [task.status].filter(Boolean))];
+  if (task.status === "in_review" && hasActiveCheckout(task)) {
+    options.splice(1, 0, "in_progress");
+  }
+  return options;
+}
+
+function taskForm(task = {}, mode = "edit") {
+  const assignment = mode === "edit"
+    ? `현재 담당 에이전트: ${nameFor("agents", task.assignee_agent_id)}`
+    : "담당 에이전트는 생성 후 체크아웃에서 지정합니다.";
   return `
+    <p class="dialog-context">${assignment}</p>
     <label class="field-label">제목<input name="title" required value="${escapeHtml(task.title)}"></label>
     <label class="field-label">설명<textarea name="description">${escapeHtml(task.description)}</textarea></label>
-    <label class="field-label">프로젝트<select name="project_id" required>${selectOptions(state.snapshot.projects, task.project_id, "프로젝트 선택")}</select></label>
-    <label class="field-label">상태<select name="status">${["backlog", "todo", "in_progress", "in_review", "blocked", "done"].map((s) => `<option value="${s}"${task.status === s ? " selected" : ""}>${statusLabel(s)}</option>`).join("")}</select></label>
+    ${taskProjectControl(task, mode)}
+    <label class="field-label">상태<select name="status">${taskStatusOptions(task, mode).map((s) => `<option value="${s}"${task.status === s ? " selected" : ""}>${statusLabel(s)}</option>`).join("")}</select></label>
     <label class="field-label">우선순위<select name="priority">${["low", "medium", "high", "critical"].map((s) => `<option value="${s}"${(task.priority || "medium") === s ? " selected" : ""}>${statusLabel(s)}</option>`).join("")}</select></label>
-    <label class="field-label">담당 에이전트<select name="assignee_agent_id">${selectOptions(state.snapshot.agents, task.assignee_agent_id)}</select></label>
     <label class="field-label">라벨<input name="labels" value="${escapeHtml((task.labels || []).join(", "))}" placeholder="demo, repository"></label>
   `;
 }
@@ -720,8 +764,8 @@ function openCreateTask() {
   openDialog({
     title: "태스크 생성",
     description: "프로젝트에 연결된 새 운영 태스크를 만듭니다.",
-    body: taskForm({ status: "backlog", priority: "medium" }),
-    onSubmit: (form) => mutate("/api/tasks", "POST", taskPayload(form, false)),
+    body: taskForm({ status: "backlog", priority: "medium" }, "create"),
+    onSubmit: (form) => mutate("/api/tasks", "POST", taskPayload(form)),
   });
 }
 
@@ -729,14 +773,14 @@ function openEditTask(id) {
   const task = byId("tasks", id);
   openDialog({
     title: "태스크 수정",
-    description: "허용된 라이프사이클과 담당 정보를 갱신합니다.",
-    body: taskForm(task),
-    onSubmit: (form) => mutate(`/api/tasks/${id}`, "PATCH", taskPayload(form, true)),
+    description: "허용된 라이프사이클과 메타데이터를 갱신합니다. 담당 변경은 체크아웃/릴리스로 수행합니다.",
+    body: taskForm(task, "edit"),
+    onSubmit: (form) => mutate(`/api/tasks/${id}`, "PATCH", taskPayload(form)),
   });
 }
 
-function taskPayload(form, includeAssignee) {
-  const payload = {
+function taskPayload(form) {
+  return {
     project_id: formValue(form, "project_id"),
     title: formValue(form, "title"),
     description: formValue(form, "description"),
@@ -744,10 +788,6 @@ function taskPayload(form, includeAssignee) {
     priority: formValue(form, "priority"),
     labels: formValue(form, "labels").split(",").map((label) => label.trim()).filter(Boolean),
   };
-  if (includeAssignee || formValue(form, "assignee_agent_id")) {
-    payload.assignee_agent_id = formValue(form, "assignee_agent_id") || null;
-  }
-  return payload;
 }
 
 function openCheckoutTask(id) {

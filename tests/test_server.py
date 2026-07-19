@@ -24,6 +24,14 @@ def _json(path, method="GET", body=None):
     return status, ctype, json.loads(body)
 
 
+def _app_js_function(name, next_name):
+    status, _, js_body = route("GET", "/static/app.js")
+    assert status == 200
+    start = js_body.index(f"function {name}")
+    end = js_body.index(f"function {next_name}", start)
+    return js_body[start:end]
+
+
 def test_health_route():
     status, _, payload = _json("/api/health")
     assert status == 200 and payload["status"] == "ok"
@@ -123,6 +131,76 @@ def test_app_js_declares_all_management_views():
     assert status == 200
     for view in ("dashboard", "projects", "tasks", "agents", "runs", "costs", "approvals", "activity"):
         assert view in body
+
+
+def test_blocked_task_resume_uses_checkout_dialog_and_creates_a_new_run():
+    actions = _app_js_function("taskActions", "renderAgents")
+    assert (
+        'task.status === "blocked") '
+        'actions.push(actionButton("checkout-task", task.id, "재개 체크아웃", "primary"))'
+    ) in actions
+    assert 'task.status === "blocked") actions.push(actionButton("task-status"' not in actions
+
+    checkout = _app_js_function("openCheckoutTask", "openPauseAgent")
+    assert 'mutate(`/api/tasks/${id}/checkout`, "POST"' in checkout
+    assert "expected_statuses: [task.status]" in checkout
+    assert 'run_id: formValue(form, "run_id")' in checkout
+
+
+def test_task_create_form_only_offers_initial_statuses():
+    status_options = _app_js_function("taskStatusOptions", "taskForm")
+    assert 'if (mode === "create") return ["backlog", "todo"];' in status_options
+
+    create_dialog = _app_js_function("openCreateTask", "openEditTask")
+    assert 'taskForm({ status: "backlog", priority: "medium" }, "create")' in create_dialog
+
+
+def test_task_edit_keeps_checkout_ownership_read_only():
+    task_form = _app_js_function("taskForm", "noteForm")
+    assert 'name="assignee_agent_id"' not in task_form
+    assert "현재 담당 에이전트" in task_form
+    assert 'nameFor("agents", task.assignee_agent_id)' in task_form
+
+    task_payload = _app_js_function("taskPayload", "openCheckoutTask")
+    assert "assignee_agent_id" not in task_payload
+
+    edit_dialog = _app_js_function("openEditTask", "taskPayload")
+    assert 'taskForm(task, "edit")' in edit_dialog
+    assert "담당 변경은 체크아웃/릴리스로 수행합니다." in edit_dialog
+
+
+def test_checked_out_task_edit_keeps_project_attribution_read_only():
+    project_control = _app_js_function("taskProjectControl", "taskStatusOptions")
+    assert 'mode === "edit" && task.checkout_run_id' in project_control
+    assert '현재 프로젝트: ${nameFor("projects", task.project_id)}' in project_control
+    assert 'type="hidden" name="project_id" value="${escapeHtml(task.project_id)}"' in project_control
+    assert '<select name="project_id" required>' in project_control
+
+    task_form = _app_js_function("taskForm", "noteForm")
+    assert "${taskProjectControl(task, mode)}" in task_form
+
+
+def test_task_edit_only_resumes_in_review_with_an_active_checkout():
+    active_checkout = _app_js_function("hasActiveCheckout", "taskActions")
+    for checkout_contract in (
+        "task.checkout_run_id",
+        "task.assignee_agent_id",
+        '["queued", "running"].includes(run.status)',
+        "run.task_id === task.id",
+        "run.agent_id === task.assignee_agent_id",
+        "run.project_id === task.project_id",
+    ):
+        assert checkout_contract in active_checkout
+
+    status_options = _app_js_function("taskStatusOptions", "taskForm")
+    assert 'backlog: ["backlog", "todo"]' in status_options
+    assert 'todo: ["todo"]' in status_options
+    assert 'blocked: ["blocked"]' in status_options
+    assert 'task.status === "in_review" && hasActiveCheckout(task)' in status_options
+    assert 'options.splice(1, 0, "in_progress")' in status_options
+
+    actions = _app_js_function("taskActions", "renderAgents")
+    assert 'if (task.status === "in_review" && hasActiveCheckout(task))' in actions
 
 
 def test_mobile_compact_rows_use_single_column_grid():
