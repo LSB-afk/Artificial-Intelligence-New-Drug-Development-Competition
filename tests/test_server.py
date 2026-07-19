@@ -304,7 +304,7 @@ def test_management_structured_errors(tmp_path):
     assert status == 405
     assert json.loads(body)["error"] == "method_not_allowed"
 
-    status, _, body = route("GET", "/api/tasks/missing")
+    status, _, body = route("PATCH", "/api/tasks/missing", {"description": "x"})
     assert status == 404
     assert {"error", "message", "details"}.issubset(json.loads(body))
 
