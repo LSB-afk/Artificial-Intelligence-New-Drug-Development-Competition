@@ -5,13 +5,18 @@ The server seeds a demo registry (approved current + a pending version that must
 not change the answer) so the registry and audit views have real content. It
 never mutates scientific state from a request.
 """
+import http.client
+import io
 import json
 import threading
 import urllib.error
 import urllib.request
 from contextlib import closing
 
-from h2l.server import configure_console_store, make_server, route
+import pytest
+
+from h2l.console_store import ConsoleError
+from h2l.server import _Handler, configure_console_store, make_server, route
 
 
 def _json(path, method="GET", body=None):
@@ -276,6 +281,68 @@ def test_management_structured_errors(tmp_path):
     assert json.loads(body)["error"] == "invalid_enum"
 
 
+def test_management_route_wrong_method_matrix_returns_405(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    snapshot = _json("/api/console")[2]
+    task_id = snapshot["tasks"][0]["id"]
+    agent_id = snapshot["agents"][0]["id"]
+    run_id = snapshot["runs"][0]["id"]
+    approval_id = snapshot["approvals"][0]["id"]
+
+    cases = [
+        ("POST", "/api/console"),
+        ("PATCH", "/api/console"),
+        ("PATCH", "/api/tasks"),
+        ("PATCH", f"/api/tasks/{task_id}/checkout"),
+        ("PATCH", f"/api/tasks/{task_id}/release"),
+        ("PATCH", f"/api/agents/{agent_id}/pause"),
+        ("PATCH", f"/api/agents/{agent_id}/resume"),
+        ("PATCH", f"/api/runs/{run_id}/retry"),
+        ("PATCH", f"/api/approvals/{approval_id}/approve"),
+    ]
+
+    for method, path in cases:
+        status, ctype, body = route(method, path, {})
+        payload = json.loads(body)
+        assert status == 405, (method, path, payload)
+        assert "application/json" in ctype
+        assert payload["error"] == "method_not_allowed"
+        assert {"message", "details"}.issubset(payload)
+
+
+def test_checkout_rejects_invalid_expected_statuses_payloads(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    snapshot = _json("/api/console")[2]
+    task_id = next(task["id"] for task in snapshot["tasks"] if task["status"] == "todo")
+    agent_id = snapshot["agents"][0]["id"]
+
+    for expected_statuses in ([], "todo", ["todo", 3], [""], [None]):
+        status, _, body = route(
+            "POST",
+            f"/api/tasks/{task_id}/checkout",
+            {
+                "agent_id": agent_id,
+                "expected_statuses": expected_statuses,
+                "run_id": f"run-{type(expected_statuses).__name__}",
+            },
+        )
+        payload = json.loads(body)
+        assert status == 400
+        assert payload["error"] == "invalid_expected_statuses"
+
+
+def test_negative_content_length_is_rejected():
+    handler = object.__new__(_Handler)
+    handler.headers = {"Content-Length": "-1"}
+    handler.rfile = io.BytesIO(b"")
+
+    with pytest.raises(ConsoleError) as error:
+        handler._read_json()
+
+    assert error.value.status == 400
+    assert error.value.code == "invalid_content_length"
+
+
 def test_server_serves_over_a_real_socket():
     server = make_server(host="127.0.0.1", port=0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -360,6 +427,34 @@ def test_real_http_json_errors_are_structured(tmp_path):
             assert json.loads(error.read())["error"] == "payload_too_large"
         else:
             raise AssertionError("oversized JSON request should fail")
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_real_http_unsupported_methods_return_structured_json(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    server = make_server(host="127.0.0.1", port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            for method in ("DELETE", "PUT"):
+                conn.request(method, "/api/tasks")
+                resp = conn.getresponse()
+                payload = json.loads(resp.read())
+                assert resp.status == 405
+                assert resp.getheader("Content-Type").startswith("application/json")
+                assert payload["error"] == "method_not_allowed"
+
+            conn.request("HEAD", "/api/tasks")
+            resp = conn.getresponse()
+            assert resp.status == 405
+            assert resp.getheader("Content-Type").startswith("application/json")
+        finally:
+            conn.close()
     finally:
         server.shutdown()
         thread.join(timeout=5)

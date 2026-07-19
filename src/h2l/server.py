@@ -1,10 +1,11 @@
-"""Read-only HTTP verification console (stdlib only, no dependencies).
+"""HTTP verification and management console (stdlib only, no dependencies).
 
 Architecture mirrors the JB reference: a static single-page frontend under
-``static/`` plus a ``/api/*`` JSON surface. The server renders decision traces,
-the evidence registry, audit events, and the ablation evaluation so a human can
-inspect the harness in a browser. It never mutates scientific state from a
-request.
+``static/`` plus a ``/api/*`` JSON surface. The scientific API renders decision
+traces, the evidence registry, audit events, and the ablation evaluation as a
+read-only surface. The management plane is mutable and persists operational
+project, task, agent, run, approval, cost, and activity state through the
+console store. It never mutates scientific state from a request.
 
     python -m h2l.server --host 127.0.0.1 --port 8765
 
@@ -240,9 +241,36 @@ def _route_console(method: str, clean: str, body) -> tuple[int, str, str] | None
 
     if method not in {"POST", "PATCH"}:
         raise ConsoleError("method_not_allowed", f"Method {method} is not allowed for {clean}", 405, {"method": method})
+    if _is_known_management_wrong_method(method, clean):
+        raise ConsoleError("method_not_allowed", f"Method {method} is not allowed for {clean}", 405, {"method": method})
     payload = _payload_object(body)
     actor = _pop_actor(payload)
     return _mutate_console(store, method, clean, payload, actor)
+
+
+def _is_known_management_wrong_method(method: str, clean: str) -> bool:
+    segments = [segment for segment in clean.split("/") if segment]
+    if clean in {"/api/console", "/api/costs"}:
+        return True
+    if clean in {"/api/projects", "/api/tasks"}:
+        return method != "POST"
+    if clean in {"/api/agents", "/api/runs", "/api/approvals", "/api/activity"}:
+        return True
+    if len(segments) == 3 and segments[:2] in (["api", "projects"], ["api", "tasks"]):
+        return method != "PATCH"
+    action_routes = {
+        ("api", "tasks", "checkout"),
+        ("api", "tasks", "release"),
+        ("api", "agents", "pause"),
+        ("api", "agents", "resume"),
+        ("api", "runs", "retry"),
+        ("api", "approvals", "approve"),
+        ("api", "approvals", "reject"),
+        ("api", "approvals", "request-revision"),
+    }
+    if len(segments) == 4 and (segments[0], segments[1], segments[3]) in action_routes:
+        return method != "POST"
+    return False
 
 
 def _mutate_console(store: HadesConsoleStore, method: str, clean: str, payload: dict, actor: str) -> tuple[int, str, str]:
@@ -261,7 +289,7 @@ def _mutate_console(store: HadesConsoleStore, method: str, clean: str, payload: 
         task = store.checkout_task(
             segments[2],
             _required_payload(payload, "agent_id"),
-            payload.get("expected_statuses", ["todo"]),
+            _expected_statuses(payload),
             _required_payload(payload, "run_id"),
             actor,
         )
@@ -302,6 +330,18 @@ def _required_payload(payload: dict, key: str):
     if value in (None, ""):
         raise ConsoleError("missing_field", f"Missing required field: {key}", 400, {"field": key})
     return value
+
+
+def _expected_statuses(payload: dict) -> list[str]:
+    statuses = payload.get("expected_statuses", ["todo"])
+    if not isinstance(statuses, list) or not statuses or any(not isinstance(item, str) or not item for item in statuses):
+        raise ConsoleError(
+            "invalid_expected_statuses",
+            "expected_statuses must be a non-empty list of strings.",
+            400,
+            {"field": "expected_statuses"},
+        )
+    return statuses
 
 
 def _ok(payload: dict) -> tuple[int, str, str]:
@@ -347,6 +387,15 @@ class _Handler(BaseHTTPRequestHandler):
     def do_PATCH(self):  # noqa: N802 (stdlib naming)
         self._dispatch("PATCH")
 
+    def do_DELETE(self):  # noqa: N802 (stdlib naming)
+        self._dispatch("DELETE")
+
+    def do_PUT(self):  # noqa: N802 (stdlib naming)
+        self._dispatch("PUT")
+
+    def do_HEAD(self):  # noqa: N802 (stdlib naming)
+        self._dispatch("HEAD")
+
     def _dispatch(self, method: str):
         try:
             body = self._read_json() if method in {"POST", "PATCH"} else None
@@ -365,6 +414,8 @@ class _Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError as exc:
             raise ConsoleError("invalid_content_length", "Content-Length must be an integer.", 400) from exc
+        if length < 0:
+            raise ConsoleError("invalid_content_length", "Content-Length cannot be negative.", 400)
         if length > MAX_JSON_BODY:
             raise ConsoleError("payload_too_large", "JSON body exceeds 1 MiB.", 413)
         if length == 0:
@@ -386,7 +437,10 @@ def make_server(host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServe
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="h2l-server", description="Read-only H2L-Forge verification console.")
+    parser = argparse.ArgumentParser(
+        prog="h2l-server",
+        description="H2L-Forge verification console with read-only scientific APIs and a mutable management plane.",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args(argv)
