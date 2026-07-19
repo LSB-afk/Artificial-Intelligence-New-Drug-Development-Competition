@@ -125,6 +125,15 @@ def test_app_js_declares_all_management_views():
         assert view in body
 
 
+def test_mobile_compact_rows_use_single_column_grid():
+    status, _, css_body = route("GET", "/static/styles.css")
+    assert status == 200
+    mobile_start = css_body.index("@media (max-width: 760px)")
+    mobile_body = css_body[mobile_start:]
+    assert ".attention-row,\n  .compact-row" in mobile_body
+    assert "grid-template-columns: minmax(0, 1fr);" in mobile_body
+
+
 def test_status_rail_reports_pending_and_approved():
     status, _, payload = _json("/api/status")
     assert status == 200

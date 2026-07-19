@@ -1562,6 +1562,11 @@ button[aria-disabled="true"] {
     flex-direction: column;
   }
 
+  .attention-row,
+  .compact-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .ops-pulse,
   .dashboard-grid {
     grid-template-columns: 1fr;
