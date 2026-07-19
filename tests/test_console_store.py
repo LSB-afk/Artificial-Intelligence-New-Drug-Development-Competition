@@ -447,6 +447,162 @@ def test_task_update_can_resume_in_progress_with_active_matching_checkout(tmp_pa
     assert error.value.code == "checkout_fields_readonly"
 
 
+def test_task_review_keeps_checkout_run_active_and_done_closes_it(tmp_path):
+    store = HadesConsoleStore(tmp_path / "console.json")
+    snapshot = store.snapshot()
+    task = next(item for item in snapshot["tasks"] if item["status"] == "todo")
+    agent = snapshot["agents"][0]
+
+    claimed = store.checkout_task(task["id"], agent["id"], ["todo"], "run-review-done", "operator")
+    reviewed = store.update_task(claimed["id"], {"status": "in_review"}, "operator")
+    after_review = store.snapshot()
+    review_run = next(item for item in after_review["runs"] if item["id"] == "run-review-done")
+    before_done_activity = len(after_review["activity"])
+
+    assert reviewed["status"] == "in_review"
+    assert reviewed["checkout_run_id"] == "run-review-done"
+    assert review_run["status"] == "running"
+    assert review_run["finished_at"] is None
+    assert review_run["duration_ms"] is None
+
+    completed = store.update_task(reviewed["id"], {"status": "done"}, "operator")
+    after_done = store.snapshot()
+    done_run = next(item for item in after_done["runs"] if item["id"] == "run-review-done")
+
+    assert completed["status"] == "done"
+    assert completed["completed_at"] is not None
+    assert done_run["status"] == "succeeded"
+    assert done_run["finished_at"] is not None
+    assert done_run["duration_ms"] >= 0
+    assert done_run["result"] == "task completed"
+    assert done_run["next_action"] == "done"
+    assert "task completed by operator" in done_run["log"]
+    assert len(after_done["activity"]) == before_done_activity + 1
+    assert after_done["activity"][-1]["action"] == "update_task"
+    assert after_done["activity"][-1]["run_id"] == "run-review-done"
+
+
+def test_task_blocked_closes_checkout_run_failed_and_retryable(tmp_path):
+    store = HadesConsoleStore(tmp_path / "console.json")
+    snapshot = store.snapshot()
+    task = next(item for item in snapshot["tasks"] if item["status"] == "todo")
+    agent = snapshot["agents"][0]
+
+    claimed = store.checkout_task(task["id"], agent["id"], ["todo"], "run-blocked", "operator")
+    before_activity = len(store.snapshot()["activity"])
+    blocked = store.update_task(claimed["id"], {"status": "blocked"}, "operator")
+    after_blocked = store.snapshot()
+    blocked_run = next(item for item in after_blocked["runs"] if item["id"] == "run-blocked")
+
+    assert blocked["status"] == "blocked"
+    assert blocked_run["status"] == "failed"
+    assert blocked_run["finished_at"] is not None
+    assert blocked_run["duration_ms"] >= 0
+    assert blocked_run["error"] == "task blocked"
+    assert blocked_run["next_action"] == "resolve blocker"
+    assert "task blocked by operator" in blocked_run["log"]
+    assert len(after_blocked["activity"]) == before_activity + 1
+    assert after_blocked["activity"][-1]["run_id"] == "run-blocked"
+
+    retried = store.retry_run("run-blocked", "operator")
+    assert retried["status"] == "queued"
+    assert retried["retry_of_run_id"] == "run-blocked"
+
+
+def test_task_done_preserves_terminal_linked_run_and_allows_legacy_unlinked_review(tmp_path):
+    store = HadesConsoleStore(tmp_path / "console.json")
+    snapshot = store.snapshot()
+    task = next(item for item in snapshot["tasks"] if item["status"] == "todo")
+    agent = snapshot["agents"][0]
+    claimed = store.checkout_task(task["id"], agent["id"], ["todo"], "run-terminal-done", "operator")
+    reviewed = store.update_task(claimed["id"], {"status": "in_review"}, "operator")
+    state = store._read()
+    run = next(item for item in state["runs"] if item["id"] == "run-terminal-done")
+    run.update(
+        {
+            "status": "succeeded",
+            "finished_at": "2026-07-19T00:00:07Z",
+            "duration_ms": 7000,
+            "result": "already terminal",
+            "next_action": "archived",
+            "log": ["terminal before task done"],
+        }
+    )
+    store._write(state)
+
+    completed = store.update_task(reviewed["id"], {"status": "done"}, "operator")
+    terminal_run = next(item for item in store.snapshot()["runs"] if item["id"] == "run-terminal-done")
+
+    assert completed["status"] == "done"
+    assert terminal_run["status"] == "succeeded"
+    assert terminal_run["finished_at"] == "2026-07-19T00:00:07Z"
+    assert terminal_run["duration_ms"] == 7000
+    assert terminal_run["result"] == "already terminal"
+    assert terminal_run["next_action"] == "archived"
+    assert terminal_run["log"] == ["terminal before task done"]
+
+    legacy = store.create_task(
+        {"project_id": snapshot["projects"][0]["id"], "title": "legacy review", "status": "todo"},
+        "operator",
+    )
+    state = store._read()
+    legacy_task = next(item for item in state["tasks"] if item["id"] == legacy["id"])
+    legacy_task["status"] = "in_review"
+    store._write(state)
+    legacy_completed = store.update_task(legacy["id"], {"status": "done"}, "operator")
+    assert legacy_completed["status"] == "done"
+    assert legacy_completed["checkout_run_id"] is None
+
+
+def test_task_terminal_transitions_reject_missing_or_mismatched_checkout_run_without_mutation(tmp_path):
+    store = HadesConsoleStore(tmp_path / "console.json")
+    snapshot = store.snapshot()
+    task = next(item for item in snapshot["tasks"] if item["status"] == "todo")
+    agent = snapshot["agents"][0]
+    claimed = store.checkout_task(task["id"], agent["id"], ["todo"], "run-missing-terminal", "operator")
+    reviewed = store.update_task(claimed["id"], {"status": "in_review"}, "operator")
+    state = store._read()
+    state["runs"] = [run for run in state["runs"] if run["id"] != "run-missing-terminal"]
+    store._write(state)
+    before_missing = store.snapshot()
+
+    with pytest.raises(ConsoleError) as error:
+        store.update_task(reviewed["id"], {"status": "done"}, "operator")
+    after_missing = store.snapshot()
+
+    assert error.value.status == 409
+    assert error.value.code == "checkout_run_missing"
+    assert next(item for item in after_missing["tasks"] if item["id"] == reviewed["id"]) == next(
+        item for item in before_missing["tasks"] if item["id"] == reviewed["id"]
+    )
+    assert len(after_missing["activity"]) == len(before_missing["activity"])
+
+    mismatch_task = store.create_task(
+        {"project_id": snapshot["projects"][0]["id"], "title": "mismatched block", "status": "todo"},
+        "operator",
+    )
+    claimed = store.checkout_task(mismatch_task["id"], agent["id"], ["todo"], "run-mismatch-block", "operator")
+    state = store._read()
+    run = next(item for item in state["runs"] if item["id"] == "run-mismatch-block")
+    run["agent_id"] = "demo-agent-reviewer"
+    store._write(state)
+    before_mismatch = store.snapshot()
+
+    with pytest.raises(ConsoleError) as error:
+        store.update_task(claimed["id"], {"status": "blocked"}, "operator")
+    after_mismatch = store.snapshot()
+
+    assert error.value.status == 409
+    assert error.value.code == "inconsistent_checkout"
+    assert next(item for item in after_mismatch["tasks"] if item["id"] == claimed["id"]) == next(
+        item for item in before_mismatch["tasks"] if item["id"] == claimed["id"]
+    )
+    assert next(item for item in after_mismatch["runs"] if item["id"] == "run-mismatch-block") == next(
+        item for item in before_mismatch["runs"] if item["id"] == "run-mismatch-block"
+    )
+    assert len(after_mismatch["activity"]) == len(before_mismatch["activity"])
+
+
 def test_task_project_change_is_rejected_while_checkout_link_is_retained(tmp_path):
     store = HadesConsoleStore(tmp_path / "console.json")
     snapshot = store.snapshot()

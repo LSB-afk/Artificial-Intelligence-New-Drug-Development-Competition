@@ -334,14 +334,17 @@ class HadesConsoleStore:
             _validate_enum("priority", next_task["priority"], TASK_PRIORITIES)
             if next_task["status"] != task["status"]:
                 _validate_task_transition(task["status"], next_task["status"])
+            run_transition = _task_run_transition(state, task, next_task)
             self._validate_task_links(state, next_task)
             if next_task["status"] == "in_progress":
                 _validate_active_checkout(state, next_task, task["status"])
             self._validate_task_state(next_task)
+            now = _now()
             if next_task["status"] == "done" and task["status"] != "done":
-                next_task["completed_at"] = next_task.get("completed_at") or _now()
+                next_task["completed_at"] = next_task.get("completed_at") or now
+            _apply_run_transition(run_transition, now, actor)
             task.update(next_task)
-            task["updated_at"] = _now()
+            task["updated_at"] = now
             self._activity(state, actor, "update_task", "task", id, run_id=task.get("checkout_run_id"))
             self._write(state)
             return _clone(task)
@@ -658,6 +661,98 @@ def _validate_checkout_project_unchanged(task, payload):
             409,
             {"project_id": task.get("project_id"), "checkout_run_id": task.get("checkout_run_id")},
         )
+
+
+def _task_run_transition(state, task, next_task):
+    if task["status"] == next_task["status"]:
+        return None
+    if task["status"] == "in_review" and next_task["status"] == "done":
+        return _linked_run_transition(
+            state,
+            task,
+            next_task,
+            allow_unlinked=True,
+            terminal_status="succeeded",
+            field="result",
+            message="task completed",
+            next_action="done",
+        )
+    if task["status"] == "in_progress" and next_task["status"] == "blocked":
+        return _linked_run_transition(
+            state,
+            task,
+            next_task,
+            allow_unlinked=False,
+            terminal_status="failed",
+            field="error",
+            message="task blocked",
+            next_action="resolve blocker",
+        )
+    return None
+
+
+def _linked_run_transition(
+    state,
+    task,
+    next_task,
+    allow_unlinked,
+    terminal_status,
+    field,
+    message,
+    next_action,
+):
+    run_id = task.get("checkout_run_id")
+    if not run_id:
+        if allow_unlinked:
+            return None
+        raise ConsoleError(
+            "checkout_required",
+            "Task checkout is required for this status transition",
+            409,
+            {"from": task["status"], "to": next_task["status"], "run_id": run_id},
+        )
+    run = _find(state["runs"], run_id)
+    if not run:
+        raise ConsoleError(
+            "checkout_run_missing",
+            f"Task {task['id']} references a missing checkout run",
+            409,
+            {"checkout_run_id": run_id},
+        )
+    mismatches = {}
+    expected = {"task_id": task["id"], "project_id": task["project_id"], "agent_id": task.get("assignee_agent_id")}
+    for field_name, expected_value in expected.items():
+        if expected_value is not None and run.get(field_name) != expected_value:
+            mismatches[field_name] = {"expected": expected_value, "actual": run.get(field_name)}
+    if mismatches:
+        raise ConsoleError(
+            "inconsistent_checkout",
+            "Linked checkout run does not match the task",
+            409,
+            {"checkout_run_id": run_id, "mismatches": mismatches},
+        )
+    if run["status"] not in {"queued", "running"}:
+        return None
+    return {
+        "run": run,
+        "status": terminal_status,
+        "field": field,
+        "message": message,
+        "next_action": next_action,
+    }
+
+
+def _apply_run_transition(transition, now, actor):
+    if not transition:
+        return
+    run = transition["run"]
+    started_at = run.get("started_at") or now
+    run["status"] = transition["status"]
+    run["finished_at"] = now
+    run["duration_ms"] = _duration_ms(started_at, now)
+    run[transition["field"]] = transition["message"]
+    run["next_action"] = transition["next_action"]
+    run.setdefault("log", []).append(f"{transition['message']} by {actor}")
 
 
 def _validate_active_checkout(state, task, previous_status):

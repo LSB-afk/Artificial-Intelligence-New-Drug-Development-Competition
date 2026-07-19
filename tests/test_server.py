@@ -455,6 +455,119 @@ def test_task_patch_can_resume_with_active_matching_checkout(tmp_path):
     assert payload["error"] == "checkout_fields_readonly"
 
 
+def test_task_patch_review_done_and_blocked_update_run_ledger(tmp_path):
+    store = configure_console_store(tmp_path / "hades.json")
+    snapshot = _json("/api/console")[2]
+    task_id = next(task["id"] for task in snapshot["tasks"] if task["status"] == "todo")
+    agent_id = snapshot["agents"][0]["id"]
+
+    status, _, _ = route(
+        "POST",
+        f"/api/tasks/{task_id}/checkout",
+        {"agent_id": agent_id, "expected_statuses": ["todo"], "run_id": "run-route-done"},
+    )
+    assert status == 200
+    status, _, _ = route("PATCH", f"/api/tasks/{task_id}", {"status": "in_review"})
+    assert status == 200
+    reviewed_run = next(run for run in _json("/api/runs")[2] if run["id"] == "run-route-done")
+    assert reviewed_run["status"] == "running"
+    assert reviewed_run["finished_at"] is None
+
+    status, _, body = route("PATCH", f"/api/tasks/{task_id}", {"status": "done"})
+    completed = json.loads(body)
+    done_run = next(run for run in _json("/api/runs")[2] if run["id"] == "run-route-done")
+    assert status == 200
+    assert completed["completed_at"] is not None
+    assert done_run["status"] == "succeeded"
+    assert done_run["duration_ms"] >= 0
+    assert done_run["result"] == "task completed"
+    assert done_run["next_action"] == "done"
+
+    second = store.create_task(
+        {"project_id": snapshot["projects"][0]["id"], "title": "route blocker", "status": "todo"},
+        "operator",
+    )
+    status, _, _ = route(
+        "POST",
+        f"/api/tasks/{second['id']}/checkout",
+        {"agent_id": agent_id, "expected_statuses": ["todo"], "run_id": "run-route-blocked"},
+    )
+    assert status == 200
+    status, _, body = route("PATCH", f"/api/tasks/{second['id']}", {"status": "blocked"})
+    blocked = json.loads(body)
+    blocked_run = next(run for run in _json("/api/runs")[2] if run["id"] == "run-route-blocked")
+    assert status == 200
+    assert blocked["status"] == "blocked"
+    assert blocked_run["status"] == "failed"
+    assert blocked_run["duration_ms"] >= 0
+    assert blocked_run["error"] == "task blocked"
+    assert blocked_run["next_action"] == "resolve blocker"
+
+    status, _, body = route("POST", "/api/runs/run-route-blocked/retry", {"actor": "ops"})
+    retried = json.loads(body)
+    assert status == 201
+    assert retried["status"] == "queued"
+    assert retried["retry_of_run_id"] == "run-route-blocked"
+
+
+def test_task_patch_terminal_run_and_bad_link_safety(tmp_path):
+    store = configure_console_store(tmp_path / "hades.json")
+    snapshot = _json("/api/console")[2]
+    task_id = next(task["id"] for task in snapshot["tasks"] if task["status"] == "todo")
+    agent_id = snapshot["agents"][0]["id"]
+
+    status, _, _ = route(
+        "POST",
+        f"/api/tasks/{task_id}/checkout",
+        {"agent_id": agent_id, "expected_statuses": ["todo"], "run_id": "run-route-terminal"},
+    )
+    assert status == 200
+    status, _, _ = route("PATCH", f"/api/tasks/{task_id}", {"status": "in_review"})
+    assert status == 200
+    state = store._read()
+    terminal = next(run for run in state["runs"] if run["id"] == "run-route-terminal")
+    terminal.update(
+        {
+            "status": "succeeded",
+            "finished_at": "2026-07-19T00:00:09Z",
+            "duration_ms": 9000,
+            "result": "already terminal",
+            "next_action": "archived",
+            "log": ["terminal before route done"],
+        }
+    )
+    store._write(state)
+
+    status, _, _ = route("PATCH", f"/api/tasks/{task_id}", {"status": "done"})
+    terminal_after = next(run for run in _json("/api/runs")[2] if run["id"] == "run-route-terminal")
+    assert status == 200
+    assert terminal_after["result"] == "already terminal"
+    assert terminal_after["next_action"] == "archived"
+    assert terminal_after["duration_ms"] == 9000
+
+    broken = store.create_task(
+        {"project_id": snapshot["projects"][0]["id"], "title": "broken review", "status": "todo"},
+        "operator",
+    )
+    claimed = store.checkout_task(broken["id"], agent_id, ["todo"], "run-route-missing", "operator")
+    store.update_task(claimed["id"], {"status": "in_review"}, "operator")
+    state = store._read()
+    state["runs"] = [run for run in state["runs"] if run["id"] != "run-route-missing"]
+    store._write(state)
+    before = _json("/api/console")[2]
+
+    status, _, body = route("PATCH", f"/api/tasks/{broken['id']}", {"status": "done"})
+    payload = json.loads(body)
+    after = _json("/api/console")[2]
+
+    assert status == 409
+    assert payload["error"] == "checkout_run_missing"
+    assert next(task for task in after["tasks"] if task["id"] == broken["id"]) == next(
+        task for task in before["tasks"] if task["id"] == broken["id"]
+    )
+    assert len(after["activity"]) == len(before["activity"])
+
+
 def test_task_patch_rejects_project_change_while_checkout_link_is_retained(tmp_path):
     configure_console_store(tmp_path / "hades.json")
     snapshot = _json("/api/console")[2]
