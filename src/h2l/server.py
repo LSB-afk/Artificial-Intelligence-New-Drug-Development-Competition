@@ -15,11 +15,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from h2l import RULESET_VERSION
+from h2l.console_store import ConsoleError, HadesConsoleStore
 from h2l.eval_runner import load_cases, run_evaluation
 from h2l.registry import SnapshotRegistry
 from h2l.replay import ClinicalContradictionCritic, DrugDiscoveryHarness, SnapshotEvidenceAdapter
@@ -28,10 +30,13 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 STATIC_DIR = BASE_DIR / "static"
 DEMO_EVIDENCE = BASE_DIR / "tests" / "fixtures" / "tyk2_ibd" / "normalized_evidence.json"
 DECISION_CASES = BASE_DIR / "evals" / "decision_cases.json"
+DEFAULT_CONSOLE_STATE = BASE_DIR / "artifacts" / "hades-console.json"
 BUDGET = {"max_tool_calls": 5, "max_attempts": 2}
+MAX_JSON_BODY = 1024 * 1024
 
 STATIC_TYPES = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".html": "text/html; charset=utf-8"}
 _STATE: dict = {}
+_CONSOLE_STORE: HadesConsoleStore | None = None
 
 
 # ---- demo state (built once, in memory) --------------------------------
@@ -147,18 +152,44 @@ def _eval_view() -> dict:
 
 
 # ---- routing -----------------------------------------------------------
-def route(method: str, path: str) -> tuple[int, str, str]:
+def configure_console_store(path: str | os.PathLike) -> HadesConsoleStore:
+    global _CONSOLE_STORE
+    _CONSOLE_STORE = HadesConsoleStore(Path(path))
+    return _CONSOLE_STORE
+
+
+def _console_store() -> HadesConsoleStore:
+    global _CONSOLE_STORE
+    if _CONSOLE_STORE is None:
+        _CONSOLE_STORE = HadesConsoleStore(Path(os.environ.get("H2L_CONSOLE_STATE_PATH", DEFAULT_CONSOLE_STATE)))
+    return _CONSOLE_STORE
+
+
+def route(method: str, path: str, body=None) -> tuple[int, str, str]:
     parts = urlsplit(path)
     clean = parts.path
     query = parse_qs(parts.query)
+    method = method.upper()
 
-    if method != "GET":
-        return 405, "application/json", json.dumps({"error": "method_not_allowed"})
+    try:
+        if clean.startswith("/api/"):
+            response = _route_console(method, clean, body)
+            if response is not None:
+                return response
+    except ConsoleError as error:
+        return _console_error(error)
 
     if clean == "/" or clean == "/index.html":
+        if method != "GET":
+            return _method_not_allowed()
         return _serve_static("index.html")
     if clean.startswith("/static/"):
+        if method != "GET":
+            return _method_not_allowed()
         return _serve_static(clean[len("/static/"):])
+
+    if method != "GET":
+        return _method_not_allowed()
 
     if clean == "/api/health":
         return _ok({"status": "ok", "ruleset": RULESET_VERSION})
@@ -178,11 +209,121 @@ def route(method: str, path: str) -> tuple[int, str, str]:
     if clean == "/api/demo":  # backward-compatible alias
         return _ok(_decide("IBD:TYK2"))
 
-    return 404, "application/json", json.dumps({"error": "not_found", "path": clean})
+    return _json_response(404, {"error": "not_found", "message": f"Route not found: {clean}", "details": {"path": clean}})
+
+
+def _route_console(method: str, clean: str, body) -> tuple[int, str, str] | None:
+    collections = {
+        "/api/projects": "projects",
+        "/api/tasks": "tasks",
+        "/api/agents": "agents",
+        "/api/runs": "runs",
+        "/api/approvals": "approvals",
+        "/api/activity": "activity",
+    }
+    is_management_path = clean in {"/api/console", "/api/costs"} or clean in collections or any(
+        clean.startswith(path + "/") for path in collections
+    )
+    if not is_management_path:
+        return None
+
+    store = _console_store()
+
+    if method == "GET":
+        if clean == "/api/console":
+            return _ok(store.snapshot())
+        if clean in collections:
+            return _json_response(200, store.list_entities(collections[clean]))
+        if clean == "/api/costs":
+            return _ok(store.cost_summary())
+        raise ConsoleError("not_found", f"Management route not found: {clean}", 404, {"path": clean})
+
+    if method not in {"POST", "PATCH"}:
+        raise ConsoleError("method_not_allowed", f"Method {method} is not allowed for {clean}", 405, {"method": method})
+    payload = _payload_object(body)
+    actor = _pop_actor(payload)
+    return _mutate_console(store, method, clean, payload, actor)
+
+
+def _mutate_console(store: HadesConsoleStore, method: str, clean: str, payload: dict, actor: str) -> tuple[int, str, str]:
+    segments = [segment for segment in clean.split("/") if segment]
+
+    if method == "POST" and segments == ["api", "projects"]:
+        return _json_response(201, store.create_project(payload, actor))
+    if method == "PATCH" and len(segments) == 3 and segments[:2] == ["api", "projects"]:
+        return _ok(store.update_project(segments[2], payload, actor))
+
+    if method == "POST" and segments == ["api", "tasks"]:
+        return _json_response(201, store.create_task(payload, actor))
+    if method == "PATCH" and len(segments) == 3 and segments[:2] == ["api", "tasks"]:
+        return _ok(store.update_task(segments[2], payload, actor))
+    if method == "POST" and len(segments) == 4 and segments[:2] == ["api", "tasks"] and segments[3] == "checkout":
+        task = store.checkout_task(
+            segments[2],
+            _required_payload(payload, "agent_id"),
+            payload.get("expected_statuses", ["todo"]),
+            _required_payload(payload, "run_id"),
+            actor,
+        )
+        return _ok(task)
+    if method == "POST" and len(segments) == 4 and segments[:2] == ["api", "tasks"] and segments[3] == "release":
+        return _ok(store.release_task(segments[2], actor))
+
+    if method == "POST" and len(segments) == 4 and segments[:2] == ["api", "agents"] and segments[3] == "pause":
+        return _ok(store.set_agent_status(segments[2], "paused", payload.get("reason"), actor))
+    if method == "POST" and len(segments) == 4 and segments[:2] == ["api", "agents"] and segments[3] == "resume":
+        return _ok(store.set_agent_status(segments[2], "idle", None, actor))
+
+    if method == "POST" and len(segments) == 4 and segments[:2] == ["api", "runs"] and segments[3] == "retry":
+        return _json_response(201, store.retry_run(segments[2], actor))
+
+    if method == "POST" and len(segments) == 4 and segments[:2] == ["api", "approvals"]:
+        return _ok(store.decide_approval(segments[2], segments[3], payload.get("note", payload.get("decision_note")), actor))
+
+    if method in {"POST", "PATCH"}:
+        raise ConsoleError("not_found", f"Management route not found: {clean}", 404, {"path": clean})
+    raise ConsoleError("method_not_allowed", f"Method {method} is not allowed for {clean}", 405, {"method": method})
+
+
+def _payload_object(body) -> dict:
+    if body is None:
+        return {}
+    if not isinstance(body, dict):
+        raise ConsoleError("invalid_payload", "JSON body must be an object.", 400)
+    return dict(body)
+
+
+def _pop_actor(payload: dict) -> str:
+    return payload.pop("actor", payload.pop("operator", "operator"))
+
+
+def _required_payload(payload: dict, key: str):
+    value = payload.get(key)
+    if value in (None, ""):
+        raise ConsoleError("missing_field", f"Missing required field: {key}", 400, {"field": key})
+    return value
 
 
 def _ok(payload: dict) -> tuple[int, str, str]:
-    return 200, "application/json; charset=utf-8", json.dumps(payload, ensure_ascii=False, indent=2)
+    return _json_response(200, payload)
+
+
+def _json_response(status: int, payload) -> tuple[int, str, str]:
+    return status, "application/json; charset=utf-8", json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _console_error(error: ConsoleError) -> tuple[int, str, str]:
+    return _json_response(
+        error.status,
+        {"error": error.code, "message": error.message, "details": error.details},
+    )
+
+
+def _method_not_allowed() -> tuple[int, str, str]:
+    return _json_response(
+        405,
+        {"error": "method_not_allowed", "message": "HTTP method is not allowed.", "details": {}},
+    )
 
 
 def _serve_static(name: str) -> tuple[int, str, str]:
@@ -198,13 +339,43 @@ def _serve_static(name: str) -> tuple[int, str, str]:
 # ---- http plumbing -----------------------------------------------------
 class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802 (stdlib naming)
-        status, ctype, body = route("GET", self.path)
+        self._dispatch("GET")
+
+    def do_POST(self):  # noqa: N802 (stdlib naming)
+        self._dispatch("POST")
+
+    def do_PATCH(self):  # noqa: N802 (stdlib naming)
+        self._dispatch("PATCH")
+
+    def _dispatch(self, method: str):
+        try:
+            body = self._read_json() if method in {"POST", "PATCH"} else None
+            status, ctype, body = route(method, self.path, body)
+        except ConsoleError as error:
+            status, ctype, body = _console_error(error)
         payload = body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+
+    def _read_json(self) -> dict:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise ConsoleError("invalid_content_length", "Content-Length must be an integer.", 400) from exc
+        if length > MAX_JSON_BODY:
+            raise ConsoleError("payload_too_large", "JSON body exceeds 1 MiB.", 413)
+        if length == 0:
+            return {}
+        try:
+            value = json.loads(self.rfile.read(length))
+        except json.JSONDecodeError as exc:
+            raise ConsoleError("invalid_json", "Request body is not valid JSON.", 400) from exc
+        if not isinstance(value, dict):
+            raise ConsoleError("invalid_payload", "JSON body must be an object.", 400)
+        return value
 
     def log_message(self, *args):  # keep the console quiet
         return

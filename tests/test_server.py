@@ -7,14 +7,15 @@ never mutates scientific state from a request.
 """
 import json
 import threading
+import urllib.error
 import urllib.request
 from contextlib import closing
 
-from h2l.server import make_server, route
+from h2l.server import configure_console_store, make_server, route
 
 
-def _json(path):
-    status, ctype, body = route("GET", path)
+def _json(path, method="GET", body=None):
+    status, ctype, body = route(method, path, body)
     return status, ctype, json.loads(body)
 
 
@@ -97,6 +98,184 @@ def test_unknown_route_is_404():
     assert status == 404
 
 
+def test_console_snapshot_exposes_management_entities(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    status, _, payload = _json("/api/console")
+    assert status == 200
+    assert {"projects", "tasks", "agents", "runs", "approvals", "activity", "costs"}.issubset(payload)
+
+
+def test_management_collection_routes_return_raw_lists_and_cost_summary(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    for path in ("/api/projects", "/api/tasks", "/api/agents", "/api/runs", "/api/approvals", "/api/activity"):
+        status, _, payload = _json(path)
+        assert status == 200
+        assert isinstance(payload, list)
+
+    status, _, payload = _json("/api/costs")
+    assert status == 200
+    assert {"total_cost_cents", "by_agent", "by_project"}.issubset(payload)
+
+
+def test_project_create_and_patch_routes_append_activity(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    snapshot = _json("/api/console")[2]
+    before = len(snapshot["activity"])
+    agent_id = snapshot["agents"][0]["id"]
+
+    status, _, body = route(
+        "POST",
+        "/api/projects",
+        {
+            "name": "관리 API 검증",
+            "description": "HTTP route test",
+            "status": "planned",
+            "lead_agent_id": agent_id,
+            "actor": "tester",
+        },
+    )
+    project = json.loads(body)
+    assert status == 201
+    assert project["name"] == "관리 API 검증"
+
+    status, _, body = route("PATCH", f"/api/projects/{project['id']}", {"status": "active", "operator": "tester"})
+    updated = json.loads(body)
+    assert status == 200
+    assert updated["status"] == "active"
+    assert len(_json("/api/activity")[2]) == before + 2
+
+
+def test_task_create_and_checkout_routes(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    snapshot = _json("/api/console")[2]
+    status, _, body = route(
+        "POST",
+        "/api/tasks",
+        {
+            "project_id": snapshot["projects"][0]["id"],
+            "title": "회귀 테스트 실행",
+            "status": "todo",
+            "priority": "high",
+        },
+    )
+    task = json.loads(body)
+    assert status == 201
+    status, _, body = route(
+        "POST",
+        f"/api/tasks/{task['id']}/checkout",
+        {
+            "agent_id": snapshot["agents"][0]["id"],
+            "expected_statuses": ["todo"],
+            "run_id": "run-http-test",
+        },
+    )
+    assert status == 200
+    assert json.loads(body)["status"] == "in_progress"
+
+
+def test_task_patch_release_and_checkout_conflict_routes(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    snapshot = _json("/api/console")[2]
+    task_id = next(task["id"] for task in snapshot["tasks"] if task["status"] == "todo")
+    agent_id = snapshot["agents"][0]["id"]
+
+    status, _, body = route("PATCH", f"/api/tasks/{task_id}", {"description": "updated by route"})
+    assert status == 200
+    assert json.loads(body)["description"] == "updated by route"
+
+    status, _, _ = route(
+        "POST",
+        f"/api/tasks/{task_id}/checkout",
+        {"agent_id": agent_id, "expected_statuses": ["backlog"], "run_id": "run-conflict-test"},
+    )
+    assert status == 409
+
+    status, _, _ = route(
+        "POST",
+        f"/api/tasks/{task_id}/checkout",
+        {"agent_id": agent_id, "expected_statuses": ["todo"], "run_id": "run-release-test"},
+    )
+    assert status == 200
+    status, _, body = route("POST", f"/api/tasks/{task_id}/release", {"operator": "tester"})
+    released = json.loads(body)
+    assert status == 200
+    assert released["status"] == "todo"
+    assert released["assignee_agent_id"] is None
+
+
+def test_agent_pause_resume_routes(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    agent_id = _json("/api/console")[2]["agents"][0]["id"]
+
+    status, _, body = route("POST", f"/api/agents/{agent_id}/pause", {"reason": "manual hold", "actor": "ops"})
+    assert status == 200
+    assert json.loads(body)["status"] == "paused"
+
+    status, _, body = route("POST", f"/api/agents/{agent_id}/resume", {"actor": "ops"})
+    assert status == 200
+    assert json.loads(body)["status"] == "idle"
+
+
+def test_run_retry_preserves_original_and_returns_created(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    failed_run = next(run for run in _json("/api/runs")[2] if run["status"] == "failed")
+
+    status, _, body = route("POST", f"/api/runs/{failed_run['id']}/retry", {"actor": "ops"})
+    retried = json.loads(body)
+    assert status == 201
+    assert retried["status"] == "queued"
+    assert retried["retry_of_run_id"] == failed_run["id"]
+
+    runs = _json("/api/runs")[2]
+    original = next(run for run in runs if run["id"] == failed_run["id"])
+    assert original["status"] == "failed"
+
+
+def test_approval_action_routes_and_terminal_conflict(tmp_path):
+    for action, expected_status in (
+        ("approve", "approved"),
+        ("reject", "rejected"),
+        ("request-revision", "revision_requested"),
+    ):
+        configure_console_store(tmp_path / f"{action}.json")
+        approval = next(item for item in _json("/api/approvals")[2] if item["status"] == "pending")
+        status, _, body = route(
+            "POST",
+            f"/api/approvals/{approval['id']}/{action}",
+            {"note": "route decision", "actor": "reviewer"},
+        )
+        assert status == 200
+        assert json.loads(body)["status"] == expected_status
+
+    status, _, body = route(
+        "POST",
+        f"/api/approvals/{approval['id']}/reject",
+        {"note": "late", "actor": "reviewer"},
+    )
+    payload = json.loads(body)
+    assert status == 409
+    assert {"error", "message", "details"}.issubset(payload)
+
+
+def test_management_structured_errors(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    status, _, body = route("DELETE", "/api/tasks")
+    assert status == 405
+    assert json.loads(body)["error"] == "method_not_allowed"
+
+    status, _, body = route("GET", "/api/tasks/missing")
+    assert status == 404
+    assert {"error", "message", "details"}.issubset(json.loads(body))
+
+    status, _, body = route("POST", "/api/tasks", ["not", "object"])
+    assert status == 400
+    assert json.loads(body)["error"] == "invalid_payload"
+
+    status, _, body = route("POST", "/api/projects", {"name": "bad", "status": "invalid"})
+    assert status == 400
+    assert json.loads(body)["error"] == "invalid_enum"
+
+
 def test_server_serves_over_a_real_socket():
     server = make_server(host="127.0.0.1", port=0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -106,6 +285,81 @@ def test_server_serves_over_a_real_socket():
         with closing(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=5)) as resp:
             assert resp.status == 200
             assert json.loads(resp.read())["status"] == "ok"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_real_http_post_creates_project(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    server = make_server(host="127.0.0.1", port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        data = json.dumps({"name": "real post"}).encode("utf-8")
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/projects",
+            data=data,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with closing(urllib.request.urlopen(request, timeout=5)) as resp:
+            assert resp.status == 201
+            assert json.loads(resp.read())["name"] == "real post"
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_real_http_json_errors_are_structured(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    server = make_server(host="127.0.0.1", port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        malformed = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/projects",
+            data=b"{",
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            urllib.request.urlopen(malformed, timeout=5)
+        except urllib.error.HTTPError as error:
+            assert error.code == 400
+            assert json.loads(error.read())["error"] == "invalid_json"
+        else:
+            raise AssertionError("malformed JSON request should fail")
+
+        non_object = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/projects",
+            data=b'["not-object"]',
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            urllib.request.urlopen(non_object, timeout=5)
+        except urllib.error.HTTPError as error:
+            assert error.code == 400
+            assert json.loads(error.read())["error"] == "invalid_payload"
+        else:
+            raise AssertionError("non-object JSON request should fail")
+
+        too_large = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/projects",
+            data=b'{"padding":"' + (b"x" * (1024 * 1024 + 1)) + b'"}',
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            urllib.request.urlopen(too_large, timeout=5)
+        except urllib.error.HTTPError as error:
+            assert error.code == 413
+            assert json.loads(error.read())["error"] == "payload_too_large"
+        else:
+            raise AssertionError("oversized JSON request should fail")
     finally:
         server.shutdown()
         thread.join(timeout=5)
