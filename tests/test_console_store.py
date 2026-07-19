@@ -210,6 +210,27 @@ def test_task_labels_are_validated_and_normalized(tmp_path):
         assert error.value.code == "invalid_labels"
 
 
+def test_create_task_rejects_checkout_run_id(tmp_path):
+    store = HadesConsoleStore(tmp_path / "console.json")
+    snapshot = store.snapshot()
+    project = snapshot["projects"][0]
+    existing_run = snapshot["runs"][0]
+
+    for field in ("checkout_run_id", "run_id"):
+        with pytest.raises(ConsoleError) as error:
+            store.create_task(
+                {
+                    "project_id": project["id"],
+                    "title": "bad checkout link",
+                    field: existing_run["id"],
+                },
+                "operator",
+            )
+        assert error.value.status == 409
+        assert error.value.code == "checkout_fields_readonly"
+        assert error.value.details["fields"] == ["checkout_run_id"]
+
+
 def test_seed_list_and_update_interfaces(tmp_path):
     seed = seed_console_data()
     assert seed["projects"][0]["source"] == "demo"
@@ -424,6 +445,38 @@ def test_task_update_can_resume_in_progress_with_active_matching_checkout(tmp_pa
         store.update_task(resumed["id"], {"checkout_run_id": "demo-run-failed"}, "operator")
     assert error.value.status == 409
     assert error.value.code == "checkout_fields_readonly"
+
+
+def test_task_project_change_is_rejected_while_checkout_link_is_retained(tmp_path):
+    store = HadesConsoleStore(tmp_path / "console.json")
+    snapshot = store.snapshot()
+    project = snapshot["projects"][0]
+    other_project = store.create_project({"name": "Other project", "status": "active"}, "operator")
+    task = next(item for item in snapshot["tasks"] if item["status"] == "todo")
+    agent = snapshot["agents"][0]
+
+    claimed = store.checkout_task(task["id"], agent["id"], ["todo"], "run-project-lock", "operator")
+    reviewed = store.update_task(claimed["id"], {"status": "in_review"}, "operator")
+    before = store.snapshot()
+
+    with pytest.raises(ConsoleError) as error:
+        store.update_task(reviewed["id"], {"project_id": other_project["id"]}, "operator")
+    after = store.snapshot()
+
+    assert error.value.status == 409
+    assert error.value.code == "checkout_project_readonly"
+    assert error.value.details == {"project_id": project["id"], "checkout_run_id": "run-project-lock"}
+    assert next(item for item in after["tasks"] if item["id"] == reviewed["id"]) == next(
+        item for item in before["tasks"] if item["id"] == reviewed["id"]
+    )
+    assert next(item for item in after["runs"] if item["id"] == "run-project-lock") == next(
+        item for item in before["runs"] if item["id"] == "run-project-lock"
+    )
+
+    resumed = store.update_task(reviewed["id"], {"status": "in_progress"}, "operator")
+    released = store.release_task(resumed["id"], "operator")
+    moved = store.update_task(released["id"], {"project_id": other_project["id"]}, "operator")
+    assert moved["project_id"] == other_project["id"]
 
 
 def test_request_revision_and_activity_are_canonical_and_append_only(tmp_path):

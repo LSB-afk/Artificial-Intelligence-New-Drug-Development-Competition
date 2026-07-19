@@ -265,6 +265,14 @@ class HadesConsoleStore:
         with self._lock:
             state = self._read()
             now = _now()
+            payload = _canonical_task_payload(payload)
+            if payload.get("checkout_run_id") is not None:
+                raise ConsoleError(
+                    "checkout_fields_readonly",
+                    "Task checkout fields can only be changed by checkout/release actions",
+                    409,
+                    {"fields": ["checkout_run_id"]},
+                )
             task = {
                 "id": payload.get("id") or _new_id("task"),
                 "project_id": _required(payload, "project_id"),
@@ -319,6 +327,7 @@ class HadesConsoleStore:
             if "labels" in payload:
                 payload["labels"] = _normalize_labels(payload["labels"])
             _validate_checkout_fields_unchanged(task, payload)
+            _validate_checkout_project_unchanged(task, payload)
             next_task = dict(task)
             next_task.update(payload)
             _validate_enum("status", next_task["status"], TASK_STATUSES)
@@ -641,6 +650,16 @@ def _validate_checkout_fields_unchanged(task, payload):
         )
 
 
+def _validate_checkout_project_unchanged(task, payload):
+    if task.get("checkout_run_id") and "project_id" in payload and payload["project_id"] != task.get("project_id"):
+        raise ConsoleError(
+            "checkout_project_readonly",
+            "Task project cannot change while a checkout run is linked",
+            409,
+            {"project_id": task.get("project_id"), "checkout_run_id": task.get("checkout_run_id")},
+        )
+
+
 def _validate_active_checkout(state, task, previous_status):
     run_id = task.get("checkout_run_id")
     agent_id = task.get("assignee_agent_id")
@@ -651,6 +670,7 @@ def _validate_active_checkout(state, task, previous_status):
         or run["status"] not in {"queued", "running"}
         or run["task_id"] != task["id"]
         or run["agent_id"] != agent_id
+        or run["project_id"] != task["project_id"]
     ):
         raise ConsoleError(
             "checkout_required",

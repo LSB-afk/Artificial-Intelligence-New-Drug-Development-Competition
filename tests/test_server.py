@@ -261,6 +261,20 @@ def test_task_create_and_checkout_routes(tmp_path):
     assert json.loads(body)["status"] == "in_progress"
 
 
+def test_task_create_rejects_checkout_run_id_route(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    snapshot = _json("/api/console")[2]
+    project_id = snapshot["projects"][0]["id"]
+    run_id = snapshot["runs"][0]["id"]
+
+    status, _, body = route("POST", "/api/tasks", {"project_id": project_id, "title": "bad", "run_id": run_id})
+    payload = json.loads(body)
+
+    assert status == 409
+    assert payload["error"] == "checkout_fields_readonly"
+    assert payload["details"]["fields"] == ["checkout_run_id"]
+
+
 def test_task_patch_release_and_checkout_conflict_routes(tmp_path):
     configure_console_store(tmp_path / "hades.json")
     snapshot = _json("/api/console")[2]
@@ -361,6 +375,49 @@ def test_task_patch_can_resume_with_active_matching_checkout(tmp_path):
     payload = json.loads(body)
     assert status == 409
     assert payload["error"] == "checkout_fields_readonly"
+
+
+def test_task_patch_rejects_project_change_while_checkout_link_is_retained(tmp_path):
+    configure_console_store(tmp_path / "hades.json")
+    snapshot = _json("/api/console")[2]
+    original_project_id = snapshot["projects"][0]["id"]
+    task_id = next(task["id"] for task in snapshot["tasks"] if task["status"] == "todo")
+    agent_id = snapshot["agents"][0]["id"]
+    status, _, body = route("POST", "/api/projects", {"name": "Other project", "status": "active"})
+    other_project_id = json.loads(body)["id"]
+    assert status == 201
+
+    status, _, _ = route(
+        "POST",
+        f"/api/tasks/{task_id}/checkout",
+        {"agent_id": agent_id, "expected_statuses": ["todo"], "run_id": "run-route-project-lock"},
+    )
+    assert status == 200
+    status, _, _ = route("PATCH", f"/api/tasks/{task_id}", {"status": "in_review"})
+    assert status == 200
+    before = _json("/api/console")[2]
+
+    status, _, body = route("PATCH", f"/api/tasks/{task_id}", {"project_id": other_project_id})
+    payload = json.loads(body)
+    after = _json("/api/console")[2]
+
+    assert status == 409
+    assert payload["error"] == "checkout_project_readonly"
+    assert payload["details"] == {"project_id": original_project_id, "checkout_run_id": "run-route-project-lock"}
+    assert next(task for task in after["tasks"] if task["id"] == task_id) == next(
+        task for task in before["tasks"] if task["id"] == task_id
+    )
+    assert next(run for run in after["runs"] if run["id"] == "run-route-project-lock") == next(
+        run for run in before["runs"] if run["id"] == "run-route-project-lock"
+    )
+
+    status, _, _ = route("PATCH", f"/api/tasks/{task_id}", {"status": "in_progress"})
+    assert status == 200
+    status, _, _ = route("POST", f"/api/tasks/{task_id}/release", {"operator": "tester"})
+    assert status == 200
+    status, _, body = route("PATCH", f"/api/tasks/{task_id}", {"project_id": other_project_id})
+    assert status == 200
+    assert json.loads(body)["project_id"] == other_project_id
 
 
 def test_task_routes_validate_labels(tmp_path):
