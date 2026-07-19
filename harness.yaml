@@ -48,6 +48,12 @@ implementation:
     replay: "src/h2l/replay.py"
     eval_runner: "src/h2l/eval_runner.py"
     cli: "src/h2l/cli.py"
+    console_store: "src/h2l/console_store.py"
+    server: "src/h2l/server.py"
+  console:
+    static_shell: "static/index.html"
+    client: "static/app.js"
+    state_path: "artifacts/hades-console.json"
   tests: "tests/"
   fixtures: "tests/fixtures/tyk2_ibd"
 
@@ -60,6 +66,9 @@ quality_gates:
   evals_defined: true
   core_harness_runnable: true
   offline_eval_reproducible: true
+  management_console_documented: true
+  management_console_state_persistent: true
+  management_console_scientific_boundary_declared: true
   demo_flow_rehearsed: false
   known_risks_disclosed: true
   handoff_ready: false
@@ -81,6 +90,10 @@ risks:
     status: "open"
     risk: "Drug-design outputs and synthesis information can create scientific, safety, and dual-use risk."
     control: "Use deterministic chemistry gates, suppress actionable synthesis instructions, require human approval, and retain audit events."
+  - id: "R-005"
+    status: "open"
+    risk: "Hades Console persists management state as a single-process JSON file, not a production multi-user database."
+    control: "Keep state under the ignored artifacts directory by default, use atomic writes and a process-local lock, and require a real database plus auth before multi-user deployment."
 
 decisions:
   - id: "D-001"
@@ -106,7 +119,11 @@ decisions:
   - id: "D-006"
     date: "2026-07-19"
     decision: "Implement the JB-derived decision core (src/h2l) as a deterministic offline harness per the 2026-07-19 design spec, before any UI or live API."
-    rationale: "Approach C ports JB's proven operating invariants (versioned registry, approval gate, snapshot-first fallback, read-only eval) with a small, testable footprint. 38 tests pass; TYK2/IBD returns REJECT/molecule_eligible=false; the offline ablation eval is byte-reproducible under seed 42."
+    rationale: "Approach C ports JB's proven operating invariants (versioned registry, approval gate, snapshot-first fallback, read-only eval) with a small, testable footprint. TYK2/IBD returns REJECT/molecule_eligible=false; the offline ablation eval is byte-reproducible under seed 42."
+  - id: "D-007"
+    date: "2026-07-19"
+    decision: "Adapt Paperclip management patterns only for software operations in Hades Console and keep them isolated from scientific authority."
+    rationale: "Projects, tasks, agents, runs, costs, approvals, and activity events improve operational auditability, but console mutations must not change evidence snapshots, target decisions, molecule eligibility, or evaluation outputs."
 
 open_questions:
   - id: "Q-001"

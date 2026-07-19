@@ -32,16 +32,21 @@
 ├── notebooks/        # 탐색/분석 노트북
 ├── prompts/          # 에이전트 역할 프롬프트
 ├── reports/          # 제안서/본선 보고서 산출물
-├── src/h2l/          # 의사결정 하네스 코어 (registry, state_machine, replay, eval_runner, cli)
+├── static/           # 하데스 콘솔 정적 셸(index.html, app.js, styles.css)
+├── src/h2l/          # 의사결정 코어와 관리 콘솔 서버/스토어
+│   ├── console_store.py  # 하데스 콘솔 JSON 관리 상태 저장소
+│   ├── server.py         # stdlib HTTP 서버와 /api/* 라우팅
+│   └── ...
 └── tests/            # 평가/회귀 테스트
 ```
 
 ## 실행 방법
 
 JB(`Search-for-AI-based-internal-regulations`)의 운영 불변조건을 이식한 결정론적 오프라인 코어다. 외부 API·RDKit 없이 동작한다.
+`pyproject.toml` 기준 Python `>=3.10` 환경에서 실행한다.
 
 ```bash
-# 전체 테스트 (38 케이스)
+# 전체 테스트 (현재 수집 80 케이스)
 python3 -m pytest
 
 # TYK2/IBD 고정 사례 한 건 실행 -> REJECT, molecule_eligible=false
@@ -49,7 +54,12 @@ PYTHONPATH=src python3 -m h2l.cli run --evidence tests/fixtures/tyk2_ibd/normali
 
 # 근거-지지 전용 baseline vs 반증 인지 candidate ablation 평가 (seed 42, 재현 가능)
 PYTHONPATH=src python3 -m h2l.cli eval --cases evals/decision_cases.json --out artifacts/eval_report.json
+
+# 하데스 콘솔 (기본 상태: artifacts/hades-console.json)
+PYTHONPATH=src python3 -m h2l.server --host 127.0.0.1 --port 8765
 ```
+
+`python3 -m pytest`는 현재 80개 테스트를 수집한다. 이 중 4개 real-socket HTTP 테스트는 실행 환경이 `127.0.0.1` 바인드를 허용해야 통과한다.
 
 코어가 보장하는 4가지 이식 불변조건:
 
@@ -57,6 +67,44 @@ PYTHONPATH=src python3 -m h2l.cli eval --cases evals/decision_cases.json --out a
 2. 타깃 판단과 분자 단계 사이에 결정론적 상태 전이와 사람 승인을 둔다(`state_machine`).
 3. 도구가 실패해도 고정 스냅샷으로 동일한 판단을 재생한다(`replay`, snapshot-first fallback).
 4. 평가 plane은 과학 상태를 변경하지 못하며, 같은 seed로 두 번 실행하면 byte-equivalent하다(`eval_runner`).
+
+## 하데스 콘솔
+
+Hades Console은 프로젝트 운영을 위한 dependency-free 관리 콘솔이다. Python 표준 라이브러리 HTTP 서버와 정적 HTML/CSS/JavaScript만 사용하며, 과학 의사결정 코어와 같은 프로세스에서 실행되지만 mutable state는 `src/h2l/console_store.py`의 별도 JSON 저장소에 둔다.
+
+기본 상태 파일은 `artifacts/hades-console.json`이다. 다른 위치를 쓰려면 실행 전에 `H2L_CONSOLE_STATE_PATH`를 지정한다.
+
+```bash
+H2L_CONSOLE_STATE_PATH=/tmp/hades-console.json \
+PYTHONPATH=src python3 -m h2l.server --host 127.0.0.1 --port 8765
+```
+
+콘솔은 8개 뷰를 제공한다.
+
+- Dashboard: 운영 요약, 주의 큐, 최근 실행, 활동
+- Projects: 프로젝트 목표, 상태, 리드 에이전트
+- Tasks: 작업 큐, 우선순위, 담당자, 체크아웃/릴리스
+- Agents: 역할, 상태, heartbeat, 월 예산 사용률, pause/resume
+- Runs: 실행 상태, 로그 요약, 비용, 실패 실행 retry
+- Costs: 총 사용량, agent/project별 비용, 비용 이벤트
+- Approvals: 운영 승인 요청의 approve/reject/request-revision
+- Activity: append-only 활동 타임라인
+
+관리 API는 `/api/console`, `/api/projects`, `/api/tasks`, `/api/agents`, `/api/runs`, `/api/costs`, `/api/approvals`, `/api/activity`를 제공한다. 생성/수정/체크아웃/릴리스/일시정지/재개/retry/승인 결정은 입력을 검증하고, 불법 상태 전이는 구조화된 JSON 오류와 409 conflict로 거부하며, 성공한 mutation마다 활동 이벤트를 추가한다. 승인은 `pending` 상태에서만 결정할 수 있고 결정 후 terminal 상태가 된다.
+
+초기 콘솔 데이터는 `source: "demo"`로 표시되는 저장소 운영 데모 데이터다. 프로젝트, 태스크, 에이전트, 실행, 비용, 승인 예시는 콘솔 동작 확인용이며 생물학적 근거, 약효, 분자 설계, 합성 가능성을 주장하지 않는다.
+
+안전 경계: Hades Console은 소프트웨어 운영 관리 plane이다. 콘솔 action은 evidence snapshot, target decision, molecule eligibility, replay/eval 결과를 변경하지 못한다. 신약개발 판단, 임상 판단, 분자 최적화, 합성 경로, 실험 프로토콜 생성은 콘솔 권한 밖이다.
+
+문서/통합 검증에 사용한 명령:
+
+```bash
+rg -n "Hades|하데스|console_store|hades-console" README.md harness.yaml docs/superpowers
+python -m py_compile src/h2l/server.py src/h2l/console_store.py
+python -m pytest tests/test_console_store.py tests/test_server.py -q -k "not real"
+python -m pytest --collect-only -q
+git diff --check
+```
 
 ## 제안 시스템 한 줄
 
@@ -66,9 +114,9 @@ PYTHONPATH=src python3 -m h2l.cli eval --cases evals/decision_cases.json --out a
 
 - 공식 대회 요건 분석 완료
 - 분야 1+2 융합 프로세스 초안 완료
-- GitHub `main`을 최신 커밋 `25c622e`로 동기화
 - 대표 negative demo: inflammatory bowel disease / TYK2 / deucravacitinib의 적응증 불일치와 IBD 임상 실패를 에이전트가 탐지해 `REJECT/HOLD`
 - positive molecule demo target: 미정이며 동일한 임상 근거 gate 통과 전까지 molecule eligibility 차단
 - AI agent harness의 CPS, 상태모델, PRD, 아키텍처, flow, eval, risk rule 초안 생성
-- JB 이식 코어 구현 완료: `src/h2l`(registry/state_machine/replay/eval_runner/cli) + 38개 테스트 통과, 결정론적 오프라인 평가 재현 확인
+- JB 이식 코어 구현 완료: `src/h2l`(registry/state_machine/replay/eval_runner/cli), 결정론적 오프라인 평가 재현 확인
+- Hades Console 통합 완료: `server.py`, `console_store.py`, `static/` 관리 UI, JSON 단일 프로세스 persistence, 승인/활동 audit
 - 다음 작업: positive target evidence qualification, live Open Targets/ChEMBL/ClinicalTrials.gov adapter + snapshot fallback, `MOLECULE_ELIGIBLE` 이후 RDKit/ADMET 분자 검증
