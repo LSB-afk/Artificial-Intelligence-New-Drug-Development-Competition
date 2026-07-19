@@ -706,9 +706,15 @@ function noteForm(label = "결정 메모", extra = "") {
 }
 
 function checkoutForm(task) {
+  const assigneeControl = task.assignee_agent_id
+    ? `
+      <p class="dialog-context">현재 담당 에이전트: ${nameFor("agents", task.assignee_agent_id)}</p>
+      <input type="hidden" name="agent_id" value="${escapeHtml(task.assignee_agent_id)}">
+    `
+    : `<label class="field-label">담당 에이전트<select name="agent_id" required>${selectOptions(state.snapshot.agents, null, "에이전트 선택")}</select></label>`;
   return `
     <p class="dialog-context">태스크: ${escapeHtml(task.title)}</p>
-    <label class="field-label">담당 에이전트<select name="agent_id" required>${selectOptions(state.snapshot.agents, task.assignee_agent_id, "에이전트 선택")}</select></label>
+    ${assigneeControl}
     <label class="field-label">Run ID<input name="run_id" required value="run-${escapeHtml(Date.now())}"></label>
   `;
 }

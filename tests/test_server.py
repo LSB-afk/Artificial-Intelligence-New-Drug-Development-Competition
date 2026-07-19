@@ -147,6 +147,15 @@ def test_blocked_task_resume_uses_checkout_dialog_and_creates_a_new_run():
     assert 'run_id: formValue(form, "run_id")' in checkout
 
 
+def test_checkout_form_locks_existing_assignee_but_selects_for_unassigned_tasks():
+    checkout_form = _app_js_function("checkoutForm", "mutate")
+    assert "const assigneeControl = task.assignee_agent_id" in checkout_form
+    assert '현재 담당 에이전트: ${nameFor("agents", task.assignee_agent_id)}' in checkout_form
+    assert 'type="hidden" name="agent_id" value="${escapeHtml(task.assignee_agent_id)}"' in checkout_form
+    assert '<select name="agent_id" required>' in checkout_form
+    assert "${assigneeControl}" in checkout_form
+
+
 def test_task_create_form_only_offers_initial_statuses():
     status_options = _app_js_function("taskStatusOptions", "taskForm")
     assert 'if (mode === "create") return ["backlog", "todo"];' in status_options
