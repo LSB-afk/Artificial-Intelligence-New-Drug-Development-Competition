@@ -1,0 +1,286 @@
+import { mkdir } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import { chromium } from 'playwright-core'
+
+const baseUrl = process.env.QA_URL ?? 'http://127.0.0.1:4173/'
+const chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+const artifactDir = new URL('../artifacts/', import.meta.url)
+
+const artifactPath = (name) => fileURLToPath(new URL(name, artifactDir))
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message)
+}
+
+async function observePage(page, errors) {
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(`console: ${message.text()}`)
+  })
+  page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`))
+  page.on('response', (response) => {
+    if (response.status() >= 400) errors.push(`http ${response.status()}: ${response.url()}`)
+  })
+}
+
+await mkdir(artifactDir, { recursive: true })
+const browser = await chromium.launch({ headless: true, executablePath: chromePath })
+const errors = []
+const checks = []
+
+try {
+  const desktop = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
+  await observePage(desktop, errors)
+  await desktop.goto(baseUrl, { waitUntil: 'networkidle' })
+
+  await desktop.getByRole('heading', { name: 'IBD 타깃 근거 검토' }).waitFor()
+  await desktop.getByText('TYK2는 이 IBD 실행의 분자 최적화 대상으로 진행하지 않습니다.').waitFor()
+  const fontSizes = await desktop.evaluate(() => {
+    const fontSize = (selector) => Number.parseFloat(getComputedStyle(document.querySelector(selector)).fontSize)
+    return {
+      body: fontSize('body'),
+      decisionBody: fontSize('.decision-summary p'),
+      evidenceBody: fontSize('.evidence-row p'),
+      stageDetail: fontSize('.stage-copy small'),
+      sourceDetail: fontSize('.source-item small'),
+      statusBadge: fontSize('.status-badge'),
+    }
+  })
+  assert(fontSizes.body >= 15, `기본 글자 크기가 너무 작습니다: ${fontSizes.body}px`)
+  assert(fontSizes.decisionBody >= 15, `판단 본문 글자 크기가 너무 작습니다: ${fontSizes.decisionBody}px`)
+  assert(fontSizes.evidenceBody >= 14, `근거 본문 글자 크기가 너무 작습니다: ${fontSizes.evidenceBody}px`)
+  assert(fontSizes.stageDetail >= 11, `단계 상세 글자 크기가 너무 작습니다: ${fontSizes.stageDetail}px`)
+  assert(fontSizes.sourceDetail >= 11, `출처 상세 글자 크기가 너무 작습니다: ${fontSizes.sourceDetail}px`)
+  assert(fontSizes.statusBadge >= 11, `상태 배지 글자 크기가 너무 작습니다: ${fontSizes.statusBadge}px`)
+  const overviewLayout = await desktop.evaluate(() => {
+    const rect = (selector) => document.querySelector(selector).getBoundingClientRect()
+    const style = (selector) => getComputedStyle(document.querySelector(selector))
+    const stage = rect('.stage-panel')
+    const decision = rect('.decision-panel')
+    const source = rect('.source-panel')
+    const workspaceStyle = style('.workspace-grid')
+    const metricsStyle = style('.run-metrics')
+    const metricStyle = style('.run-metrics > div')
+    const activeTabStyle = style('.tabbar button.is-active')
+    return {
+      stage: { x: stage.x, y: stage.y, width: stage.width, bottom: stage.bottom },
+      decision: { x: decision.x, y: decision.y, width: decision.width },
+      source: { x: source.x, y: source.y, width: source.width },
+      eyebrowCount: document.querySelectorAll('.eyebrow').length,
+      workspaceGap: Number.parseFloat(workspaceStyle.columnGap),
+      workspaceRadius: Number.parseFloat(workspaceStyle.borderRadius),
+      workspaceShadow: workspaceStyle.boxShadow,
+      panelBackgrounds: [style('.stage-panel').backgroundColor, style('.decision-panel').backgroundColor, style('.source-panel').backgroundColor],
+      panelHeadingBackgrounds: [style('.stage-panel > .panel-heading').backgroundColor, style('.decision-panel > .panel-heading').backgroundColor, style('.source-panel > .panel-heading').backgroundColor],
+      bodyFontFamily: style('body').fontFamily,
+      decisionFontFamily: style('.decision-summary h3').fontFamily,
+      sidebarBackground: style('.sidebar').backgroundColor,
+      brandBackground: style('.brand-mark').backgroundColor,
+      newRunBackground: style('.new-run-button').backgroundColor,
+      primaryButtonBackground: style('.primary-button').backgroundColor,
+      metricAccentColors: [...document.querySelectorAll('.run-metrics > div')].map((element) => getComputedStyle(element, '::before').backgroundColor),
+      metricGap: Number.parseFloat(metricsStyle.columnGap),
+      metricRadius: Number.parseFloat(metricStyle.borderRadius),
+      metricShadow: metricStyle.boxShadow,
+      activeTabBackground: activeTabStyle.backgroundColor,
+      activeTabShadow: activeTabStyle.boxShadow,
+    }
+  })
+  assert(overviewLayout.decision.x > overviewLayout.stage.x, '핵심 판단이 실행 단계 오른쪽에 배치되지 않았습니다.')
+  assert(overviewLayout.decision.width >= 800, `핵심 판단 영역이 충분히 넓지 않습니다: ${overviewLayout.decision.width}px`)
+  assert(overviewLayout.source.y >= overviewLayout.stage.bottom - 1, '출처가 실행 단계 아래에 배치되지 않았습니다.')
+  assert(overviewLayout.source.width >= overviewLayout.stage.width + overviewLayout.decision.width - 1, '출처가 작업면 전체 폭을 사용하지 않습니다.')
+  assert(overviewLayout.eyebrowCount === 0, '반복 영문 보조 라벨이 남아 있습니다.')
+  assert(overviewLayout.workspaceGap <= 1, `개요가 분리된 카드 묶음으로 보입니다: ${overviewLayout.workspaceGap}px`)
+  assert(overviewLayout.workspaceRadius >= 6 && overviewLayout.workspaceRadius <= 8, `작업면 깊이 반경이 설계 범위를 벗어났습니다: ${overviewLayout.workspaceRadius}px`)
+  assert(overviewLayout.workspaceShadow !== 'none', '핵심 작업면에 깊이 표현이 없습니다.')
+  assert(new Set(overviewLayout.panelBackgrounds).size >= 2, `개요 패널의 층 구분이 부족합니다: ${overviewLayout.panelBackgrounds.join(', ')}`)
+  assert(new Set(overviewLayout.panelHeadingBackgrounds).size === 1, `패널 제목 표면이 서로 이어지지 않습니다: ${overviewLayout.panelHeadingBackgrounds.join(', ')}`)
+  assert(overviewLayout.decisionFontFamily === overviewLayout.bodyFontFamily, `핵심 판단과 본문의 서체 계열이 다릅니다: ${overviewLayout.decisionFontFamily} / ${overviewLayout.bodyFontFamily}`)
+  assert(overviewLayout.sidebarBackground === 'rgb(248, 251, 252)', `사이드바가 밝은 연구 도구 테마가 아닙니다: ${overviewLayout.sidebarBackground}`)
+  assert(overviewLayout.primaryButtonBackground === 'rgb(47, 111, 228)', `주요 동작 색상이 선명하지 않습니다: ${overviewLayout.primaryButtonBackground}`)
+  assert(overviewLayout.brandBackground === overviewLayout.primaryButtonBackground, `브랜드와 주요 동작의 주색이 다릅니다: ${overviewLayout.brandBackground} / ${overviewLayout.primaryButtonBackground}`)
+  assert(overviewLayout.newRunBackground === overviewLayout.primaryButtonBackground, `새 실행 버튼이 제품 주색과 다릅니다: ${overviewLayout.newRunBackground} / ${overviewLayout.primaryButtonBackground}`)
+  assert(new Set(overviewLayout.metricAccentColors).size === 1 && overviewLayout.metricAccentColors[0] === overviewLayout.primaryButtonBackground, `메트릭 강조색이 통일되지 않았습니다: ${overviewLayout.metricAccentColors.join(', ')}`)
+  assert(overviewLayout.metricGap >= 10, `요약 타일 사이 구분 간격이 부족합니다: ${overviewLayout.metricGap}px`)
+  assert(overviewLayout.metricRadius >= 6, `요약 타일의 표면 모서리가 구분되지 않습니다: ${overviewLayout.metricRadius}px`)
+  assert(overviewLayout.metricShadow !== 'none', '요약 타일에 깊이 표현이 없습니다.')
+  assert(overviewLayout.activeTabBackground === 'rgb(255, 255, 255)' && overviewLayout.activeTabShadow !== 'none', '활성 탭이 별도 탐색 레이어로 구분되지 않습니다.')
+  checks.push(`readable typography ${JSON.stringify(fontSizes)}`)
+  checks.push(`layered vibrant overview ${JSON.stringify(overviewLayout)}`)
+  await desktop.screenshot({ path: artifactPath('desktop-evidence.png'), fullPage: true })
+  checks.push('desktop evidence decision')
+
+  await desktop.getByRole('tab', { name: /분자/ }).click()
+  await desktop.getByRole('heading', { name: '타깃 기각으로 분자 단계가 실행되지 않았습니다.' }).waitFor()
+  checks.push('molecule stage empty state')
+
+  await desktop.getByRole('button', { name: /분자 비교 UI fixture 열기/ }).click()
+  await desktop.getByRole('heading', { name: '분자 비교 화면 점검' }).waitFor()
+  await desktop.locator('.molecule-render svg').first().waitFor({ timeout: 20000 })
+  const renderedStructures = await desktop.locator('.molecule-render svg').count()
+  assert(renderedStructures >= 2, `RDKit SVG가 충분히 렌더링되지 않았습니다: ${renderedStructures}`)
+  await desktop.screenshot({ path: artifactPath('desktop-molecules.png'), fullPage: true })
+  checks.push(`RDKit structures ${renderedStructures}`)
+
+  await desktop.getByRole('tab', { name: /보고서/ }).click()
+  await desktop.getByText('SYNTHETIC', { exact: true }).waitFor()
+  await desktop.getByText('과학적 결론이 아닌 UI 렌더링 확인 결과입니다.').count()
+  const reportFonts = await desktop.evaluate(() => ({
+    body: getComputedStyle(document.body).fontFamily,
+    title: getComputedStyle(document.querySelector('.report-title-row h2')).fontFamily,
+  }))
+  assert(reportFonts.title === reportFonts.body, `보고서 제목과 제품 본문의 서체 계열이 다릅니다: ${reportFonts.title} / ${reportFonts.body}`)
+  await desktop.screenshot({ path: artifactPath('desktop-report.png'), fullPage: true })
+  checks.push('synthetic report disclosure and typography unity')
+
+  await desktop.getByRole('button', { name: '새 실행', exact: true }).first().click()
+  const dialog = desktop.getByRole('dialog', { name: '새 실행 시작' })
+  await dialog.getByRole('button', { name: /IBD 근거 검토/ }).click()
+  await dialog.getByRole('button', { name: /실행 시작/ }).click()
+  await desktop.getByText('실행 중', { exact: true }).first().waitFor({ timeout: 3000 })
+  await desktop.locator('.run-activity-banner').waitFor({ timeout: 3000 })
+  await desktop.locator('.stage-item-running').waitFor({ timeout: 3000 })
+  await desktop.locator('.running-stage-output').waitFor({ timeout: 3000 })
+  const liveExecution = await desktop.evaluate(() => {
+    const animationChecks = [
+      ['activity pulse', '.activity-pulse', '::after'],
+      ['global progress scan', '.activity-progress > i > span'],
+      ['stage marker pulse', '.stage-marker.stage-running', '::after'],
+      ['stage connector flow', '.stage-connector.connector-running', '::after'],
+      ['runtime orbit', '.runtime-ring-one'],
+      ['runtime activity bars', '.runtime-flow i'],
+    ]
+    const activeAnimations = animationChecks.filter(([, selector, pseudo]) => {
+      const element = document.querySelector(selector)
+      return element && getComputedStyle(element, pseudo).animationName !== 'none'
+    }).map(([name]) => name)
+    const progress = document.querySelector('.activity-progress')
+    const progressFill = document.querySelector('.activity-progress > i')
+    const progressRatio = progress && progressFill
+      ? progressFill.getBoundingClientRect().width / progress.getBoundingClientRect().width
+      : 0
+    return {
+      activeAnimations,
+      bannerStage: document.querySelector('.activity-copy strong')?.textContent ?? '',
+      centralStage: document.querySelector('.running-stage-output h3')?.textContent ?? '',
+      progressRatio,
+      runningStages: document.querySelectorAll('.stage-item-running').length,
+      runtimeStatusCells: document.querySelectorAll('.runtime-status-grid > span').length,
+    }
+  })
+  assert(liveExecution.runningStages === 1, `현재 실행 단계가 1개가 아닙니다: ${liveExecution.runningStages}`)
+  assert(liveExecution.centralStage && liveExecution.bannerStage.includes(liveExecution.centralStage), `상단과 중앙의 실행 단계가 다릅니다: ${liveExecution.bannerStage} / ${liveExecution.centralStage}`)
+  assert(liveExecution.progressRatio > 0 && liveExecution.progressRatio < 1, `실행 중 진행 막대가 유효하지 않습니다: ${liveExecution.progressRatio}`)
+  assert(liveExecution.activeAnimations.length === 6, `실행 상태 애니메이션이 누락됐습니다: ${liveExecution.activeAnimations.join(', ')}`)
+  assert(liveExecution.runtimeStatusCells === 3, `실행 상태 요약이 3개가 아닙니다: ${liveExecution.runtimeStatusCells}`)
+  await desktop.waitForTimeout(850)
+  await desktop.screenshot({ path: artifactPath('desktop-running.png'), fullPage: true })
+  checks.push(`live harness motion ${JSON.stringify(liveExecution)}`)
+  assert(await desktop.getByText('TYK2는 이 IBD 실행의 분자 최적화 대상으로 진행하지 않습니다.').count() === 0, '실행 초기에 최종 TYK2 판단이 노출됩니다.')
+  await desktop.getByText('검토 대기', { exact: true }).first().waitFor({ timeout: 10000 })
+  assert(await desktop.locator('.run-activity-banner').count() === 0, '실행 완료 후에도 실행 중 배너가 남아 있습니다.')
+  const skippedStages = await desktop.locator('.stage-marker.stage-skipped').count()
+  assert(skippedStages === 5, `미실행 단계가 5개가 아닙니다: ${skippedStages}`)
+  await desktop.getByRole('button', { name: /검토 완료 처리/ }).click()
+  await desktop.getByRole('button', { name: /검토 완료/ }).waitFor()
+  checks.push('run lifecycle, delayed output, and human review')
+
+  await desktop.getByRole('button', { name: '새 실행', exact: true }).first().click()
+  const fixtureDialog = desktop.getByRole('dialog', { name: '새 실행 시작' })
+  await fixtureDialog.getByRole('button', { name: /분자 비교 UI 점검/ }).click()
+  await fixtureDialog.getByRole('button', { name: /실행 시작/ }).click()
+  await desktop.getByRole('heading', { name: '합성 fixture 레코드를 생성하는 중입니다.' }).waitFor({ timeout: 3000 })
+  assert(await desktop.getByText('FIX-042', { exact: true }).count() === 0, '후보 생성 전에 합성 분자 레코드가 노출됩니다.')
+  await desktop.getByRole('heading', { name: '분자 비교 화면 점검' }).waitFor({ timeout: 7000 })
+  await desktop.getByRole('button', { name: /실행 취소/ }).click()
+  await desktop.getByText('취소', { exact: true }).first().waitFor()
+  checks.push('synthetic output gate and cancellation')
+
+  await desktop.getByRole('button', { name: '새 실행', exact: true }).first().click()
+  await desktop.keyboard.press('Escape')
+  assert(await desktop.getByRole('dialog').count() === 0, 'Escape 키로 모달이 닫히지 않았습니다.')
+  checks.push('dialog escape')
+
+  const compactDesktop = await browser.newPage({ viewport: { width: 1100, height: 900 }, deviceScaleFactor: 1 })
+  await observePage(compactDesktop, errors)
+  await compactDesktop.goto(baseUrl, { waitUntil: 'networkidle' })
+  await compactDesktop.getByRole('heading', { name: 'IBD 타깃 근거 검토' }).waitFor()
+  const compactLayout = await compactDesktop.evaluate(() => {
+    const decision = document.querySelector('.decision-panel').getBoundingClientRect()
+    const sidebar = document.querySelector('.sidebar').getBoundingClientRect()
+    return {
+      decisionWidth: decision.width,
+      horizontalOverflow: document.documentElement.scrollWidth - window.innerWidth,
+      sidebarRight: sidebar.right,
+    }
+  })
+  assert(compactLayout.decisionWidth >= 700, `중간 폭에서 판단 영역이 너무 좁습니다: ${compactLayout.decisionWidth}px`)
+  assert(compactLayout.horizontalOverflow <= 1, `중간 폭에서 가로 넘침이 있습니다: ${compactLayout.horizontalOverflow}px`)
+  assert(compactLayout.sidebarRight <= 0, `중간 폭에서 사이드바가 콘텐츠를 압축합니다: ${compactLayout.sidebarRight}px`)
+  await compactDesktop.screenshot({ path: artifactPath('compact-evidence.png'), fullPage: true })
+  checks.push(`compact desktop spacing ${JSON.stringify(compactLayout)}`)
+
+  const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 })
+  await observePage(mobile, errors)
+  await mobile.goto(baseUrl, { waitUntil: 'networkidle' })
+  await mobile.getByRole('heading', { name: 'IBD 타깃 근거 검토' }).waitFor()
+  const decisionBox = await mobile.locator('.decision-panel').boundingBox()
+  const stageBox = await mobile.locator('.stage-panel').boundingBox()
+  assert(decisionBox && stageBox && decisionBox.y < stageBox.y, '모바일에서 결정 패널이 파이프라인보다 먼저 배치되지 않았습니다.')
+  const horizontalOverflow = await mobile.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
+  assert(horizontalOverflow <= 1, `모바일 가로 넘침이 있습니다: ${horizontalOverflow}px`)
+  await mobile.screenshot({ path: artifactPath('mobile-evidence.png'), fullPage: true })
+  checks.push('mobile decision order and overflow')
+
+  await mobile.getByRole('button', { name: '새 실행', exact: true }).last().click()
+  const mobileDialog = mobile.getByRole('dialog', { name: '새 실행 시작' })
+  await mobileDialog.getByRole('button', { name: /IBD 근거 검토/ }).click()
+  await mobileDialog.getByRole('button', { name: /실행 시작/ }).click()
+  await mobile.locator('.run-activity-banner').waitFor({ timeout: 3000 })
+  await mobile.locator('.running-stage-output').waitFor({ timeout: 3000 })
+  await mobile.waitForTimeout(850)
+  const mobileRunningLayout = await mobile.evaluate(() => {
+    const banner = document.querySelector('.run-activity-banner')?.getBoundingClientRect()
+    const percent = document.querySelector('.activity-percent')?.getBoundingClientRect()
+    const progress = document.querySelector('.activity-progress')?.getBoundingClientRect()
+    const runtime = document.querySelector('.running-stage-output')?.getBoundingClientRect()
+    return {
+      bannerWidth: banner?.width ?? 0,
+      runtimeWidth: runtime?.width ?? 0,
+      percentAboveProgress: Boolean(percent && progress && percent.bottom <= progress.top),
+      statusColumns: getComputedStyle(document.querySelector('.runtime-status-grid')).gridTemplateColumns,
+      horizontalOverflow: document.documentElement.scrollWidth - window.innerWidth,
+    }
+  })
+  assert(mobileRunningLayout.bannerWidth <= 390, `모바일 실행 배너가 화면을 벗어납니다: ${mobileRunningLayout.bannerWidth}px`)
+  assert(mobileRunningLayout.runtimeWidth <= 358, `모바일 처리 화면이 컨텐츠 폭을 벗어납니다: ${mobileRunningLayout.runtimeWidth}px`)
+  assert(mobileRunningLayout.percentAboveProgress, '모바일 진행률 숫자가 진행 막대 아래로 밀렸습니다.')
+  assert(mobileRunningLayout.horizontalOverflow <= 1, `모바일 실행 중 가로 넘침이 있습니다: ${mobileRunningLayout.horizontalOverflow}px`)
+  await mobile.screenshot({ path: artifactPath('mobile-running.png'), fullPage: true })
+  checks.push(`mobile live execution ${JSON.stringify(mobileRunningLayout)}`)
+
+  await mobile.getByRole('button', { name: '메뉴 열기' }).click()
+  await mobile.waitForFunction(() => document.querySelector('.sidebar')?.getBoundingClientRect().left >= -1)
+  const mobileSidebar = await mobile.evaluate(() => {
+    const sidebar = document.querySelector('.sidebar')
+    const rect = sidebar.getBoundingClientRect()
+    return { left: rect.left, background: getComputedStyle(sidebar).backgroundColor }
+  })
+  assert(mobileSidebar.left >= -1, `모바일 사이드바가 화면 안으로 열리지 않았습니다: ${mobileSidebar.left}px`)
+  assert(mobileSidebar.background === 'rgb(248, 251, 252)', `모바일 사이드바에 이전 어두운 테마가 남아 있습니다: ${mobileSidebar.background}`)
+  await mobile.screenshot({ path: artifactPath('mobile-sidebar.png') })
+  await mobile.getByRole('button', { name: '메뉴 닫기' }).first().click()
+  checks.push('bright mobile sidebar')
+
+  await mobile.getByRole('tab', { name: /개요/ }).focus()
+  await mobile.keyboard.press('ArrowRight')
+  assert(await mobile.getByRole('tab', { name: /타깃/ }).getAttribute('aria-selected') === 'true', '탭 화살표 키 이동이 동작하지 않습니다.')
+  checks.push('keyboard tab navigation')
+
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  assert(errors.length === 0, `브라우저 오류가 있습니다:\n${errors.join('\n')}`)
+
+  process.stdout.write(`${JSON.stringify({ ok: true, checks, errors }, null, 2)}\n`)
+} finally {
+  await browser.close()
+}
