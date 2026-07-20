@@ -65,7 +65,11 @@ try {
       eyebrowCount: document.querySelectorAll('.eyebrow').length,
       workspaceGap: Number.parseFloat(workspaceStyle.columnGap),
       workspaceRadius: Number.parseFloat(workspaceStyle.borderRadius),
+      workspaceShadow: workspaceStyle.boxShadow,
       panelBackgrounds: [style('.stage-panel').backgroundColor, style('.decision-panel').backgroundColor, style('.source-panel').backgroundColor],
+      decisionFontFamily: style('.decision-summary h3').fontFamily,
+      sidebarBackground: style('.sidebar').backgroundColor,
+      primaryButtonBackground: style('.primary-button').backgroundColor,
     }
   })
   assert(overviewLayout.decision.x > overviewLayout.stage.x, '핵심 판단이 실행 단계 오른쪽에 배치되지 않았습니다.')
@@ -74,10 +78,14 @@ try {
   assert(overviewLayout.source.width >= overviewLayout.stage.width + overviewLayout.decision.width - 1, '출처가 작업면 전체 폭을 사용하지 않습니다.')
   assert(overviewLayout.eyebrowCount === 0, '반복 영문 보조 라벨이 남아 있습니다.')
   assert(overviewLayout.workspaceGap <= 1, `개요가 분리된 카드 묶음으로 보입니다: ${overviewLayout.workspaceGap}px`)
-  assert(overviewLayout.workspaceRadius <= 3, `개요 외곽 모서리가 지나치게 둥글게 처리되었습니다: ${overviewLayout.workspaceRadius}px`)
-  assert(new Set(overviewLayout.panelBackgrounds).size === 1, `개요 패널 배경이 일관되지 않습니다: ${overviewLayout.panelBackgrounds.join(', ')}`)
+  assert(overviewLayout.workspaceRadius >= 6 && overviewLayout.workspaceRadius <= 8, `작업면 깊이 반경이 설계 범위를 벗어났습니다: ${overviewLayout.workspaceRadius}px`)
+  assert(overviewLayout.workspaceShadow !== 'none', '핵심 작업면에 깊이 표현이 없습니다.')
+  assert(new Set(overviewLayout.panelBackgrounds).size >= 2, `개요 패널의 층 구분이 부족합니다: ${overviewLayout.panelBackgrounds.join(', ')}`)
+  assert(/Iowan|AppleMyungjo|Noto Serif|Georgia/.test(overviewLayout.decisionFontFamily), `핵심 판단에 학술 제목 서체가 적용되지 않았습니다: ${overviewLayout.decisionFontFamily}`)
+  assert(overviewLayout.sidebarBackground === 'rgb(248, 251, 252)', `사이드바가 밝은 연구 도구 테마가 아닙니다: ${overviewLayout.sidebarBackground}`)
+  assert(overviewLayout.primaryButtonBackground === 'rgb(47, 111, 228)', `주요 동작 색상이 선명하지 않습니다: ${overviewLayout.primaryButtonBackground}`)
   checks.push(`readable typography ${JSON.stringify(fontSizes)}`)
-  checks.push(`calm two-column overview ${JSON.stringify(overviewLayout)}`)
+  checks.push(`layered vibrant overview ${JSON.stringify(overviewLayout)}`)
   await desktop.screenshot({ path: artifactPath('desktop-evidence.png'), fullPage: true })
   checks.push('desktop evidence decision')
 
@@ -158,6 +166,19 @@ try {
   assert(horizontalOverflow <= 1, `모바일 가로 넘침이 있습니다: ${horizontalOverflow}px`)
   await mobile.screenshot({ path: artifactPath('mobile-evidence.png'), fullPage: true })
   checks.push('mobile decision order and overflow')
+
+  await mobile.getByRole('button', { name: '메뉴 열기' }).click()
+  await mobile.waitForFunction(() => document.querySelector('.sidebar')?.getBoundingClientRect().left >= -1)
+  const mobileSidebar = await mobile.evaluate(() => {
+    const sidebar = document.querySelector('.sidebar')
+    const rect = sidebar.getBoundingClientRect()
+    return { left: rect.left, background: getComputedStyle(sidebar).backgroundColor }
+  })
+  assert(mobileSidebar.left >= -1, `모바일 사이드바가 화면 안으로 열리지 않았습니다: ${mobileSidebar.left}px`)
+  assert(mobileSidebar.background === 'rgb(248, 251, 252)', `모바일 사이드바에 이전 어두운 테마가 남아 있습니다: ${mobileSidebar.background}`)
+  await mobile.screenshot({ path: artifactPath('mobile-sidebar.png') })
+  await mobile.getByRole('button', { name: '메뉴 닫기' }).first().click()
+  checks.push('bright mobile sidebar')
 
   await mobile.getByRole('tab', { name: /개요/ }).focus()
   await mobile.keyboard.press('ArrowRight')
