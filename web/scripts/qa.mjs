@@ -34,6 +34,24 @@ try {
 
   await desktop.getByRole('heading', { name: 'IBD 타깃 근거 검토' }).waitFor()
   await desktop.getByText('TYK2는 이 IBD 실행의 분자 최적화 대상으로 진행하지 않습니다.').waitFor()
+  const fontSizes = await desktop.evaluate(() => {
+    const fontSize = (selector) => Number.parseFloat(getComputedStyle(document.querySelector(selector)).fontSize)
+    return {
+      body: fontSize('body'),
+      decisionBody: fontSize('.decision-summary p'),
+      evidenceBody: fontSize('.evidence-row p'),
+      stageDetail: fontSize('.stage-copy small'),
+      sourceDetail: fontSize('.source-item small'),
+      statusBadge: fontSize('.status-badge'),
+    }
+  })
+  assert(fontSizes.body >= 14, `기본 글자 크기가 너무 작습니다: ${fontSizes.body}px`)
+  assert(fontSizes.decisionBody >= 13, `판단 본문 글자 크기가 너무 작습니다: ${fontSizes.decisionBody}px`)
+  assert(fontSizes.evidenceBody >= 12, `근거 본문 글자 크기가 너무 작습니다: ${fontSizes.evidenceBody}px`)
+  assert(fontSizes.stageDetail >= 10, `단계 상세 글자 크기가 너무 작습니다: ${fontSizes.stageDetail}px`)
+  assert(fontSizes.sourceDetail >= 10, `출처 상세 글자 크기가 너무 작습니다: ${fontSizes.sourceDetail}px`)
+  assert(fontSizes.statusBadge >= 10, `상태 배지 글자 크기가 너무 작습니다: ${fontSizes.statusBadge}px`)
+  checks.push(`readable typography ${JSON.stringify(fontSizes)}`)
   await desktop.screenshot({ path: artifactPath('desktop-evidence.png'), fullPage: true })
   checks.push('desktop evidence decision')
 
