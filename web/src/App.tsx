@@ -44,6 +44,19 @@ const tabs: Array<{ id: TabId; label: string; icon: typeof LayoutDashboard }> = 
 
 const terminalStatuses: StageStatus[] = ['completed', 'warning', 'failed', 'skipped', 'blocked', 'cancelled']
 
+function LiveElapsed({ startedAt }: { startedAt: string }) {
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 250)
+    return () => window.clearInterval(timer)
+  }, [startedAt])
+
+  const startedAtMs = new Date(startedAt).getTime()
+  return <>{formatDuration(Number.isNaN(startedAtMs) ? 0 : Math.max(0, now - startedAtMs))}</>
+}
+
 function App() {
   const {
     runs, snapshot, selectedRunId, isLoading, error,
@@ -172,11 +185,20 @@ function App() {
 
   const { run } = snapshot
   const isRunning = run.status === 'running' || run.status === 'queued'
+  const runningStage = snapshot.stages.find((stage) => stage.status === 'running')
+  const activityStage = runningStage ?? snapshot.stages.find((stage) => stage.status === 'queued')
+  const activityStageIndex = activityStage
+    ? snapshot.stages.findIndex((stage) => stage.id === activityStage.id)
+    : -1
+  const progressUnits = metrics.processed + (isRunning && activityStage ? 0.45 : 0)
+  const progressPercent = Math.min(100, snapshot.stages.length
+    ? (progressUnits / snapshot.stages.length) * 100
+    : 0)
   const monitorActive = ['overview', 'targets', 'molecules', 'failures'].includes(activeTab)
   const selectedScenarioOption = scenarioOptions.find((option) => option.id === selectedScenario) ?? scenarioOptions[0]
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${isRunning ? ' is-running' : ''}`}>
       <aside className={`sidebar${isSidebarOpen ? ' is-open' : ''}`}>
         <div className="brand-row">
           <div className="brand-mark">H2L</div>
@@ -194,7 +216,13 @@ function App() {
         <div className="sidebar-section-heading"><span>최근 실행</span><span>{runs.length}</span></div>
         <div className="recent-runs">
           {runs.map((item) => (
-            <button aria-current={selectedRunId === item.id ? 'true' : undefined} className={selectedRunId === item.id ? 'is-selected' : ''} key={item.id} type="button" onClick={() => { void handleSelectRun(item.id) }}>
+            <button
+              aria-current={selectedRunId === item.id ? 'true' : undefined}
+              className={`${selectedRunId === item.id ? 'is-selected' : ''}${item.status === 'running' || item.status === 'queued' ? ' is-live' : ''}`}
+              key={item.id}
+              type="button"
+              onClick={() => { void handleSelectRun(item.id) }}
+            >
               <span className={`run-dot run-${item.status}`} />
               <div><strong>{item.title}</strong><small>{item.id}</small></div>
               <time dateTime={item.createdAt}>{formatTime(item.createdAt)}</time>
@@ -240,9 +268,25 @@ function App() {
           </div>
         </section>
 
+        {isRunning && (
+          <div className="run-activity-banner" role="status" aria-live="polite">
+            <span className="activity-pulse" aria-hidden="true"><Activity size={17} /></span>
+            <div className="activity-copy">
+              <strong>{run.status === 'queued' ? '실행 준비 중' : `${activityStage?.label ?? '하네스'} 실행 중`}</strong>
+              <span>{activityStage
+                ? `${activityStage.agent} · ${activityStageIndex + 1}/${snapshot.stages.length} 단계`
+                : '작업 큐에서 실행을 준비하고 있습니다.'}</span>
+            </div>
+            <div className="activity-progress" aria-label={`전체 진행률 ${Math.round(progressPercent)}%`}>
+              <i style={{ width: `${progressPercent}%` }}><span /></i>
+            </div>
+            <strong className="activity-percent">{Math.round(progressPercent)}%</strong>
+          </div>
+        )}
+
         <section className="run-metrics" aria-label="실행 요약">
-          <div><span>단계 처리</span><strong>{metrics.processed}/{snapshot.stages.length}</strong><div className="progress-track"><i style={{ width: `${snapshot.stages.length ? (metrics.processed / snapshot.stages.length) * 100 : 0}%` }} /></div><small>완료 {metrics.completed} · 주의 {metrics.warnings} · 미실행 {metrics.skipped}</small></div>
-          <div><span>실행 시간</span><strong>{isRunning ? '진행 중' : formatDuration(run.durationMs)}</strong><small><Clock3 size={13} /> {isRunning ? '스냅샷 갱신 중' : `갱신 ${formatDateTime(run.updatedAt)}`}</small></div>
+          <div className={isRunning ? 'live-metric' : undefined}><span>단계 처리</span><strong>{metrics.processed}/{snapshot.stages.length}</strong><div className={`progress-track${isRunning ? ' is-live' : ''}`}><i style={{ width: `${progressPercent}%` }} /></div><small>완료 {metrics.completed} · 주의 {metrics.warnings} · 미실행 {metrics.skipped}</small></div>
+          <div className={isRunning ? 'live-metric' : undefined}><span>실행 시간</span><strong>{isRunning ? <LiveElapsed startedAt={run.createdAt} /> : formatDuration(run.durationMs)}</strong><small><Clock3 size={13} /> {isRunning ? `${activityStage?.label ?? '하네스'} 처리 중` : `갱신 ${formatDateTime(run.updatedAt)}`}</small></div>
           <div><span>타깃 판단</span><strong>{snapshot.targets.length ? `기각 ${metrics.rejected} · 검토 ${metrics.review}` : '해당 없음'}</strong><small>채택된 타깃 0</small></div>
           <div><span>분자 출력</span><strong>{snapshot.molecules.length ? `${snapshot.molecules.length}개 UI fixture` : '0개 · 미실행'}</strong><small>{snapshot.molecules.length ? '모두 합성 테스트 레코드' : '결정 게이트에서 중단'}</small></div>
           <div><span>데이터 분류</span><strong>{run.classification === 'synthetic' ? '합성 데이터' : '출처 스냅샷'}</strong><small>{run.mode === 'snapshot' ? '모의 연결' : '실시간 연결'}</small></div>

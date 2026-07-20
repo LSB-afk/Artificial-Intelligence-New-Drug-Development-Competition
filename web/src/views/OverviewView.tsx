@@ -1,4 +1,5 @@
 import {
+  Activity,
   AlertTriangle,
   ArrowDown,
   ArrowRight,
@@ -14,8 +15,9 @@ import {
   ShieldOff,
   XCircle,
 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import StatusBadge from '../components/StatusBadge'
-import type { RunSnapshot, StageStatus } from '../domain/contracts'
+import type { RunSnapshot, StageSnapshot, StageStatus } from '../domain/contracts'
 import { formatDuration } from '../lib/format'
 
 interface OverviewProps {
@@ -35,6 +37,47 @@ function StageIcon({ status }: { status: StageStatus }) {
   if (status === 'blocked' || status === 'cancelled') return <Ban size={13} />
   if (status === 'failed') return <XCircle size={13} />
   return <Clock3 size={13} />
+}
+
+function StageDuration({ stage }: { stage: StageSnapshot }) {
+  const [elapsed, setElapsed] = useState<number | undefined>(stage.durationMs)
+
+  useEffect(() => {
+    if (stage.status !== 'running' || !stage.startedAt) {
+      setElapsed(stage.durationMs)
+      return undefined
+    }
+
+    const startedAt = new Date(stage.startedAt).getTime()
+    const updateElapsed = () => setElapsed(Number.isNaN(startedAt) ? 0 : Math.max(0, Date.now() - startedAt))
+    updateElapsed()
+    const timer = window.setInterval(updateElapsed, 250)
+    return () => window.clearInterval(timer)
+  }, [stage.durationMs, stage.startedAt, stage.status])
+
+  if (stage.status === 'queued' && stage.durationMs === undefined) return <>대기</>
+  return <>{formatDuration(elapsed)}</>
+}
+
+function RunningStageOutput({ stage, total }: { stage: StageSnapshot; total: number }) {
+  return (
+    <div className="running-stage-output" role="status" aria-live="polite">
+      <div className="runtime-visual" aria-hidden="true">
+        <span className="runtime-ring runtime-ring-one" />
+        <span className="runtime-ring runtime-ring-two" />
+        <span className="runtime-core"><Activity size={25} /></span>
+      </div>
+      <div className="runtime-kicker"><i />현재 단계 실행 중</div>
+      <h3>{stage.label}</h3>
+      <p><strong>{stage.agent}</strong>가 입력과 이전 단계 산출물을 확인하고 결과를 기록하고 있습니다.</p>
+      <div className="runtime-flow" aria-hidden="true"><i /><i /><i /><i /><i /></div>
+      <div className="runtime-status-grid">
+        <span><small>단계</small><strong>{stage.ordinal}/{total}</strong></span>
+        <span><small>경과 시간</small><strong><StageDuration stage={stage} /></strong></span>
+        <span><small>도구</small><strong>{stage.toolCall?.name ?? '준비 중'}</strong></span>
+      </div>
+    </div>
+  )
 }
 
 export default function OverviewView({ snapshot, selectedStageId, onSelectStage, onOpenTargets }: OverviewProps) {
@@ -60,27 +103,29 @@ export default function OverviewView({ snapshot, selectedStageId, onSelectStage,
           {stages.map((stage, index) => (
             <button
               aria-current={selectedStage.id === stage.id ? 'step' : undefined}
-              className={`stage-item${selectedStage.id === stage.id ? ' is-active' : ''}`}
+              className={`stage-item stage-item-${stage.status}${selectedStage.id === stage.id ? ' is-active' : ''}`}
               key={stage.id}
               onClick={() => onSelectStage(stage.id)}
               type="button"
             >
               <span className={`stage-marker stage-${stage.status}`}><StageIcon status={stage.status} /></span>
               <span className="stage-copy"><strong>{stage.label}</strong><small>{stage.agent}</small></span>
-              <span className="stage-duration">{formatDuration(stage.durationMs)}</span>
-              {index < stages.length - 1 && <span className="stage-connector" />}
+              <span className="stage-duration"><StageDuration stage={stage} /></span>
+              {index < stages.length - 1 && <span className={`stage-connector connector-${stage.status}`} />}
             </button>
           ))}
         </div>
       </section>
 
-      <main className="decision-panel">
+      <main className={`decision-panel${selectedStage.status === 'running' ? ' is-processing' : ''}`}>
         <div className="panel-heading">
           <div><h2>{selectedStage.label}</h2></div>
           <StatusBadge status={selectedStage.status} />
         </div>
 
-        {showDecision && focusTarget ? (
+        {selectedStage.status === 'running' ? (
+          <RunningStageOutput stage={selectedStage} total={stages.length} />
+        ) : showDecision && focusTarget ? (
           <>
             <div className="decision-summary">
               <div className="decision-kicker"><AlertTriangle size={16} />적응증별 임상 근거가 최초 판단과 충돌</div>

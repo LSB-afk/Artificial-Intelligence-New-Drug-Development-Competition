@@ -146,7 +146,7 @@ export class MockHarnessClient implements HarnessClient {
         if (next) {
           snapshot.stages[index + 1] = {
             ...next,
-            status: terminalStatuses[index + 1] === 'skipped' ? 'queued' : 'running',
+            status: 'running',
             startedAt: new Date().toISOString(),
           }
         }

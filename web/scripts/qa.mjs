@@ -138,8 +138,47 @@ try {
   await dialog.getByRole('button', { name: /IBD 근거 검토/ }).click()
   await dialog.getByRole('button', { name: /실행 시작/ }).click()
   await desktop.getByText('실행 중', { exact: true }).first().waitFor({ timeout: 3000 })
+  await desktop.locator('.run-activity-banner').waitFor({ timeout: 3000 })
+  await desktop.locator('.stage-item-running').waitFor({ timeout: 3000 })
+  await desktop.locator('.running-stage-output').waitFor({ timeout: 3000 })
+  const liveExecution = await desktop.evaluate(() => {
+    const animationChecks = [
+      ['activity pulse', '.activity-pulse', '::after'],
+      ['global progress scan', '.activity-progress > i > span'],
+      ['stage marker pulse', '.stage-marker.stage-running', '::after'],
+      ['stage connector flow', '.stage-connector.connector-running', '::after'],
+      ['runtime orbit', '.runtime-ring-one'],
+      ['runtime activity bars', '.runtime-flow i'],
+    ]
+    const activeAnimations = animationChecks.filter(([, selector, pseudo]) => {
+      const element = document.querySelector(selector)
+      return element && getComputedStyle(element, pseudo).animationName !== 'none'
+    }).map(([name]) => name)
+    const progress = document.querySelector('.activity-progress')
+    const progressFill = document.querySelector('.activity-progress > i')
+    const progressRatio = progress && progressFill
+      ? progressFill.getBoundingClientRect().width / progress.getBoundingClientRect().width
+      : 0
+    return {
+      activeAnimations,
+      bannerStage: document.querySelector('.activity-copy strong')?.textContent ?? '',
+      centralStage: document.querySelector('.running-stage-output h3')?.textContent ?? '',
+      progressRatio,
+      runningStages: document.querySelectorAll('.stage-item-running').length,
+      runtimeStatusCells: document.querySelectorAll('.runtime-status-grid > span').length,
+    }
+  })
+  assert(liveExecution.runningStages === 1, `현재 실행 단계가 1개가 아닙니다: ${liveExecution.runningStages}`)
+  assert(liveExecution.centralStage && liveExecution.bannerStage.includes(liveExecution.centralStage), `상단과 중앙의 실행 단계가 다릅니다: ${liveExecution.bannerStage} / ${liveExecution.centralStage}`)
+  assert(liveExecution.progressRatio > 0 && liveExecution.progressRatio < 1, `실행 중 진행 막대가 유효하지 않습니다: ${liveExecution.progressRatio}`)
+  assert(liveExecution.activeAnimations.length === 6, `실행 상태 애니메이션이 누락됐습니다: ${liveExecution.activeAnimations.join(', ')}`)
+  assert(liveExecution.runtimeStatusCells === 3, `실행 상태 요약이 3개가 아닙니다: ${liveExecution.runtimeStatusCells}`)
+  await desktop.waitForTimeout(850)
+  await desktop.screenshot({ path: artifactPath('desktop-running.png'), fullPage: true })
+  checks.push(`live harness motion ${JSON.stringify(liveExecution)}`)
   assert(await desktop.getByText('TYK2는 이 IBD 실행의 분자 최적화 대상으로 진행하지 않습니다.').count() === 0, '실행 초기에 최종 TYK2 판단이 노출됩니다.')
   await desktop.getByText('검토 대기', { exact: true }).first().waitFor({ timeout: 10000 })
+  assert(await desktop.locator('.run-activity-banner').count() === 0, '실행 완료 후에도 실행 중 배너가 남아 있습니다.')
   const skippedStages = await desktop.locator('.stage-marker.stage-skipped').count()
   assert(skippedStages === 5, `미실행 단계가 5개가 아닙니다: ${skippedStages}`)
   await desktop.getByRole('button', { name: /검토 완료 처리/ }).click()
@@ -192,6 +231,33 @@ try {
   assert(horizontalOverflow <= 1, `모바일 가로 넘침이 있습니다: ${horizontalOverflow}px`)
   await mobile.screenshot({ path: artifactPath('mobile-evidence.png'), fullPage: true })
   checks.push('mobile decision order and overflow')
+
+  await mobile.getByRole('button', { name: '새 실행', exact: true }).last().click()
+  const mobileDialog = mobile.getByRole('dialog', { name: '새 실행 시작' })
+  await mobileDialog.getByRole('button', { name: /IBD 근거 검토/ }).click()
+  await mobileDialog.getByRole('button', { name: /실행 시작/ }).click()
+  await mobile.locator('.run-activity-banner').waitFor({ timeout: 3000 })
+  await mobile.locator('.running-stage-output').waitFor({ timeout: 3000 })
+  await mobile.waitForTimeout(850)
+  const mobileRunningLayout = await mobile.evaluate(() => {
+    const banner = document.querySelector('.run-activity-banner')?.getBoundingClientRect()
+    const percent = document.querySelector('.activity-percent')?.getBoundingClientRect()
+    const progress = document.querySelector('.activity-progress')?.getBoundingClientRect()
+    const runtime = document.querySelector('.running-stage-output')?.getBoundingClientRect()
+    return {
+      bannerWidth: banner?.width ?? 0,
+      runtimeWidth: runtime?.width ?? 0,
+      percentAboveProgress: Boolean(percent && progress && percent.bottom <= progress.top),
+      statusColumns: getComputedStyle(document.querySelector('.runtime-status-grid')).gridTemplateColumns,
+      horizontalOverflow: document.documentElement.scrollWidth - window.innerWidth,
+    }
+  })
+  assert(mobileRunningLayout.bannerWidth <= 390, `모바일 실행 배너가 화면을 벗어납니다: ${mobileRunningLayout.bannerWidth}px`)
+  assert(mobileRunningLayout.runtimeWidth <= 358, `모바일 처리 화면이 컨텐츠 폭을 벗어납니다: ${mobileRunningLayout.runtimeWidth}px`)
+  assert(mobileRunningLayout.percentAboveProgress, '모바일 진행률 숫자가 진행 막대 아래로 밀렸습니다.')
+  assert(mobileRunningLayout.horizontalOverflow <= 1, `모바일 실행 중 가로 넘침이 있습니다: ${mobileRunningLayout.horizontalOverflow}px`)
+  await mobile.screenshot({ path: artifactPath('mobile-running.png'), fullPage: true })
+  checks.push(`mobile live execution ${JSON.stringify(mobileRunningLayout)}`)
 
   await mobile.getByRole('button', { name: '메뉴 열기' }).click()
   await mobile.waitForFunction(() => document.querySelector('.sidebar')?.getBoundingClientRect().left >= -1)
