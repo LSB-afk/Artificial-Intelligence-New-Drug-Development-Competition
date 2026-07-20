@@ -58,6 +58,9 @@ try {
     const decision = rect('.decision-panel')
     const source = rect('.source-panel')
     const workspaceStyle = style('.workspace-grid')
+    const metricsStyle = style('.run-metrics')
+    const metricStyle = style('.run-metrics > div')
+    const activeTabStyle = style('.tabbar button.is-active')
     return {
       stage: { x: stage.x, y: stage.y, width: stage.width, bottom: stage.bottom },
       decision: { x: decision.x, y: decision.y, width: decision.width },
@@ -75,6 +78,11 @@ try {
       newRunBackground: style('.new-run-button').backgroundColor,
       primaryButtonBackground: style('.primary-button').backgroundColor,
       metricAccentColors: [...document.querySelectorAll('.run-metrics > div')].map((element) => getComputedStyle(element, '::before').backgroundColor),
+      metricGap: Number.parseFloat(metricsStyle.columnGap),
+      metricRadius: Number.parseFloat(metricStyle.borderRadius),
+      metricShadow: metricStyle.boxShadow,
+      activeTabBackground: activeTabStyle.backgroundColor,
+      activeTabShadow: activeTabStyle.boxShadow,
     }
   })
   assert(overviewLayout.decision.x > overviewLayout.stage.x, '핵심 판단이 실행 단계 오른쪽에 배치되지 않았습니다.')
@@ -93,6 +101,10 @@ try {
   assert(overviewLayout.brandBackground === overviewLayout.primaryButtonBackground, `브랜드와 주요 동작의 주색이 다릅니다: ${overviewLayout.brandBackground} / ${overviewLayout.primaryButtonBackground}`)
   assert(overviewLayout.newRunBackground === overviewLayout.primaryButtonBackground, `새 실행 버튼이 제품 주색과 다릅니다: ${overviewLayout.newRunBackground} / ${overviewLayout.primaryButtonBackground}`)
   assert(new Set(overviewLayout.metricAccentColors).size === 1 && overviewLayout.metricAccentColors[0] === overviewLayout.primaryButtonBackground, `메트릭 강조색이 통일되지 않았습니다: ${overviewLayout.metricAccentColors.join(', ')}`)
+  assert(overviewLayout.metricGap >= 10, `요약 타일 사이 구분 간격이 부족합니다: ${overviewLayout.metricGap}px`)
+  assert(overviewLayout.metricRadius >= 6, `요약 타일의 표면 모서리가 구분되지 않습니다: ${overviewLayout.metricRadius}px`)
+  assert(overviewLayout.metricShadow !== 'none', '요약 타일에 깊이 표현이 없습니다.')
+  assert(overviewLayout.activeTabBackground === 'rgb(255, 255, 255)' && overviewLayout.activeTabShadow !== 'none', '활성 탭이 별도 탐색 레이어로 구분되지 않습니다.')
   checks.push(`readable typography ${JSON.stringify(fontSizes)}`)
   checks.push(`layered vibrant overview ${JSON.stringify(overviewLayout)}`)
   await desktop.screenshot({ path: artifactPath('desktop-evidence.png'), fullPage: true })
