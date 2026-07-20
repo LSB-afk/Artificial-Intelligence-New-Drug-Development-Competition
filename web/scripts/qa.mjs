@@ -53,20 +53,29 @@ try {
   assert(fontSizes.statusBadge >= 11, `상태 배지 글자 크기가 너무 작습니다: ${fontSizes.statusBadge}px`)
   const overviewLayout = await desktop.evaluate(() => {
     const rect = (selector) => document.querySelector(selector).getBoundingClientRect()
+    const style = (selector) => getComputedStyle(document.querySelector(selector))
     const stage = rect('.stage-panel')
     const decision = rect('.decision-panel')
     const source = rect('.source-panel')
+    const workspaceStyle = style('.workspace-grid')
     return {
       stage: { x: stage.x, y: stage.y, width: stage.width, bottom: stage.bottom },
       decision: { x: decision.x, y: decision.y, width: decision.width },
       source: { x: source.x, y: source.y, width: source.width },
       eyebrowCount: document.querySelectorAll('.eyebrow').length,
+      workspaceGap: Number.parseFloat(workspaceStyle.columnGap),
+      workspaceRadius: Number.parseFloat(workspaceStyle.borderRadius),
+      panelBackgrounds: [style('.stage-panel').backgroundColor, style('.decision-panel').backgroundColor, style('.source-panel').backgroundColor],
     }
   })
   assert(overviewLayout.decision.x > overviewLayout.stage.x, '핵심 판단이 실행 단계 오른쪽에 배치되지 않았습니다.')
   assert(overviewLayout.decision.width >= 800, `핵심 판단 영역이 충분히 넓지 않습니다: ${overviewLayout.decision.width}px`)
-  assert(overviewLayout.source.y > overviewLayout.stage.bottom, '출처가 실행 단계 아래에 배치되지 않았습니다.')
+  assert(overviewLayout.source.y >= overviewLayout.stage.bottom - 1, '출처가 실행 단계 아래에 배치되지 않았습니다.')
+  assert(overviewLayout.source.width >= overviewLayout.stage.width + overviewLayout.decision.width - 1, '출처가 작업면 전체 폭을 사용하지 않습니다.')
   assert(overviewLayout.eyebrowCount === 0, '반복 영문 보조 라벨이 남아 있습니다.')
+  assert(overviewLayout.workspaceGap <= 1, `개요가 분리된 카드 묶음으로 보입니다: ${overviewLayout.workspaceGap}px`)
+  assert(overviewLayout.workspaceRadius <= 3, `개요 외곽 모서리가 지나치게 둥글게 처리되었습니다: ${overviewLayout.workspaceRadius}px`)
+  assert(new Set(overviewLayout.panelBackgrounds).size === 1, `개요 패널 배경이 일관되지 않습니다: ${overviewLayout.panelBackgrounds.join(', ')}`)
   checks.push(`readable typography ${JSON.stringify(fontSizes)}`)
   checks.push(`calm two-column overview ${JSON.stringify(overviewLayout)}`)
   await desktop.screenshot({ path: artifactPath('desktop-evidence.png'), fullPage: true })
