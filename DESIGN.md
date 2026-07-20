@@ -45,7 +45,7 @@
 - Existing components to reuse: none
 - New/changed components: app shell, run switcher, stage navigator, evidence comparison, source list, target table, molecule fixture table, failure ledger, audit timeline, report view, start-run modal, RDKit renderer
 - Variants and states: queued, running, completed, warning, failed, skipped, blocked, cancelled; review, rejected, insufficient-data, reference-only, demo-only
-- Token/component ownership: `web/src/styles.css` owns prototype tokens and component styling
+- Token/component ownership: `web_dongseop/src/styles.css` owns prototype tokens and component styling
 
 ## Accessibility
 - Target standard: WCAG 2.2 AA where practical for the prototype
