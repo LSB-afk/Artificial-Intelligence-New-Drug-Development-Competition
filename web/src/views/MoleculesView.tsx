@@ -40,7 +40,6 @@ export default function MoleculesView({ molecules, scenarioKind, runStatus, onOp
     return (
       <section className="empty-state-panel molecule-empty-state">
         {isFixtureLoading ? <Clock3 size={28} /> : <ShieldOff size={28} />}
-        <span className="eyebrow">{isFixtureLoading ? 'Fixture running' : 'Molecule stages not run'}</span>
         <h2>{isFixtureLoading ? '합성 fixture 레코드를 생성하는 중입니다.' : '타깃 기각으로 분자 단계가 실행되지 않았습니다.'}</h2>
         <p>{isFixtureLoading ? '후보 생성 단계가 끝나기 전에는 분자와 proxy 수치를 표시하지 않습니다.' : '후보 생성, 활성 대리평가, ADMET, 합성 가능성 수치는 만들지 않았습니다. 이 빈 상태가 현재 실행의 올바른 결과입니다.'}</p>
         {!isFixtureLoading && <button className="secondary-button" type="button" onClick={onOpenFixture}><Beaker size={16} /> 분자 비교 UI fixture 열기</button>}
@@ -59,7 +58,7 @@ export default function MoleculesView({ molecules, scenarioKind, runStatus, onOp
 
       <section className="table-panel molecule-table-panel">
         <div className="panel-heading molecule-heading">
-          <div><span className="eyebrow">Candidate comparison fixture</span><h2>분자 비교 화면 점검</h2></div>
+          <div><h2>분자 비교 화면 점검</h2></div>
           <StatusBadge status="synthetic" />
         </div>
         <div className="table-toolbar">
@@ -114,7 +113,7 @@ export default function MoleculesView({ molecules, scenarioKind, runStatus, onOp
         </div>
         <div className="molecule-detail">
           <div className="inspector-header molecule-detail-head">
-            <div><span className="eyebrow">Selected fixture record</span><h2>{selected.id}</h2><p>{selected.name}</p></div>
+            <div><h2>{selected.id}</h2><p>{selected.name}</p></div>
             <StatusBadge status={selected.decision} />
           </div>
           <div className="smiles-block"><span>Input SMILES</span><code>{selected.smiles}</code></div>

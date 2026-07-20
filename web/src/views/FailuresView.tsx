@@ -13,7 +13,6 @@ export default function FailuresView({ failures }: { failures: FailureRecord[] }
     return (
       <section className="empty-state-panel">
         <CheckCircle2 size={28} />
-        <span className="eyebrow">Failure ledger</span>
         <h2>이 실행에는 기록된 실패나 정책 중단이 없습니다.</h2>
         <p>합성 UI fixture의 정상 렌더링 상태입니다. 실제 하네스에서는 실패 원인과 다음 행동이 같은 계약으로 들어옵니다.</p>
       </section>
@@ -27,7 +26,7 @@ export default function FailuresView({ failures }: { failures: FailureRecord[] }
   return (
     <section className="table-panel failure-panel">
       <div className="panel-heading">
-        <div><span className="eyebrow">Failure as output</span><h2>실패와 미실행 기록</h2></div>
+        <div><h2>실패와 미실행 기록</h2></div>
         <div className="heading-note">결과를 만들지 않은 이유도 감사 대상입니다.</div>
       </div>
       <div className="failure-summary-strip">

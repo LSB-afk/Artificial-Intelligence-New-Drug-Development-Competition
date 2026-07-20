@@ -56,7 +56,7 @@ export default function ReportView({ snapshot }: { snapshot: RunSnapshot }) {
       <section className="report-document">
         <div className="report-title-row">
           <div className="report-mark">H2L</div>
-          <div><span className="eyebrow">{isFixture ? 'Interface fixture summary' : 'Research decision report'}</span><h2>{run.title}</h2><p>{run.id} · {run.diseaseId} · {formatDateTime(run.createdAt)}</p></div>
+          <div><h2>{run.title}</h2><p>{run.id} · {run.diseaseId} · {formatDateTime(run.createdAt)}</p></div>
           <button className="primary-button" type="button" onClick={downloadReport} disabled={isRunActive}><Download size={16} /> TXT 다운로드</button>
         </div>
 
@@ -110,7 +110,7 @@ export default function ReportView({ snapshot }: { snapshot: RunSnapshot }) {
       </section>
 
       <aside className="report-aside">
-        <div className="panel-heading compact-heading"><div><span className="eyebrow">Available artifacts</span><h2>실제 산출물</h2></div></div>
+        <div className="panel-heading compact-heading"><div><h2>실제 산출물</h2></div></div>
         {availableArtifacts.length > 0 ? availableArtifacts.map((artifact) => (
           <button className="artifact-row" type="button" key={artifact.id} onClick={() => downloadArtifact(artifact)}>
             <FileText size={16} /><span><strong>{artifact.name}</strong><small>{artifact.description}</small></span><Download size={14} />

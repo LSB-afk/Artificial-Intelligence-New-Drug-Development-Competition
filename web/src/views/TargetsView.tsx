@@ -21,7 +21,6 @@ export default function TargetsView({ targets, evidence, selectedSymbol, onSelec
     return (
       <section className="empty-state-panel">
         <FlaskConical size={26} />
-        <span className="eyebrow">No target records</span>
         <h2>이 실행은 타깃 연구 결과를 포함하지 않습니다.</h2>
         <p>분자 비교 UI fixture는 화면 동작 확인용 합성 데이터입니다. 타깃 판단은 IBD 근거 검토 실행에서 확인하세요.</p>
       </section>
@@ -32,7 +31,7 @@ export default function TargetsView({ targets, evidence, selectedSymbol, onSelec
     <div className="data-split-view">
       <section className="table-panel">
         <div className="panel-heading">
-          <div><span className="eyebrow">Target ranking</span><h2>타깃 우선순위</h2></div>
+          <div><h2>타깃 우선순위</h2></div>
           <div className="heading-note">출처 점수와 내부 운영 점수를 분리해 표시</div>
         </div>
         <div className="table-scroll">
@@ -64,7 +63,7 @@ export default function TargetsView({ targets, evidence, selectedSymbol, onSelec
 
       <aside className="inspector-panel">
         <div className="inspector-header">
-          <div><span className="eyebrow">Selected target</span><h2>{selected.symbol}</h2><p>{selected.name}</p></div>
+          <div><h2>{selected.symbol}</h2><p>{selected.name}</p></div>
           <StatusBadge status={selected.decision} />
         </div>
         <div className="score-change-card">

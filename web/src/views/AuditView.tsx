@@ -33,7 +33,7 @@ export default function AuditView({ snapshot }: { snapshot: RunSnapshot }) {
     <div className="audit-layout">
       <section className="audit-timeline-panel">
         <div className="panel-heading">
-          <div><span className="eyebrow">Audit trail</span><h2>실행 감사 기록</h2></div>
+          <div><h2>실행 감사 기록</h2></div>
           <button className="icon-text-button" type="button" onClick={exportAudit}><Download size={15} /> JSON 내보내기</button>
         </div>
         <div className="audit-timeline">
@@ -55,7 +55,7 @@ export default function AuditView({ snapshot }: { snapshot: RunSnapshot }) {
       </section>
 
       <aside className="audit-summary-panel">
-        <div className="panel-heading compact-heading"><div><span className="eyebrow">Recorded counts</span><h2>기록된 범위</h2></div></div>
+        <div className="panel-heading compact-heading"><div><h2>기록된 범위</h2></div></div>
         <dl className="coverage-list audit-count-list">
           <div><dt>실행 이벤트</dt><dd>{events.length}</dd></div>
           <div><dt>버전이 있는 도구 호출</dt><dd>{versionedCalls} / {events.length}</dd></div>

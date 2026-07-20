@@ -45,13 +45,30 @@ try {
       statusBadge: fontSize('.status-badge'),
     }
   })
-  assert(fontSizes.body >= 14, `기본 글자 크기가 너무 작습니다: ${fontSizes.body}px`)
-  assert(fontSizes.decisionBody >= 13, `판단 본문 글자 크기가 너무 작습니다: ${fontSizes.decisionBody}px`)
-  assert(fontSizes.evidenceBody >= 12, `근거 본문 글자 크기가 너무 작습니다: ${fontSizes.evidenceBody}px`)
-  assert(fontSizes.stageDetail >= 10, `단계 상세 글자 크기가 너무 작습니다: ${fontSizes.stageDetail}px`)
-  assert(fontSizes.sourceDetail >= 10, `출처 상세 글자 크기가 너무 작습니다: ${fontSizes.sourceDetail}px`)
-  assert(fontSizes.statusBadge >= 10, `상태 배지 글자 크기가 너무 작습니다: ${fontSizes.statusBadge}px`)
+  assert(fontSizes.body >= 15, `기본 글자 크기가 너무 작습니다: ${fontSizes.body}px`)
+  assert(fontSizes.decisionBody >= 15, `판단 본문 글자 크기가 너무 작습니다: ${fontSizes.decisionBody}px`)
+  assert(fontSizes.evidenceBody >= 14, `근거 본문 글자 크기가 너무 작습니다: ${fontSizes.evidenceBody}px`)
+  assert(fontSizes.stageDetail >= 11, `단계 상세 글자 크기가 너무 작습니다: ${fontSizes.stageDetail}px`)
+  assert(fontSizes.sourceDetail >= 11, `출처 상세 글자 크기가 너무 작습니다: ${fontSizes.sourceDetail}px`)
+  assert(fontSizes.statusBadge >= 11, `상태 배지 글자 크기가 너무 작습니다: ${fontSizes.statusBadge}px`)
+  const overviewLayout = await desktop.evaluate(() => {
+    const rect = (selector) => document.querySelector(selector).getBoundingClientRect()
+    const stage = rect('.stage-panel')
+    const decision = rect('.decision-panel')
+    const source = rect('.source-panel')
+    return {
+      stage: { x: stage.x, y: stage.y, width: stage.width, bottom: stage.bottom },
+      decision: { x: decision.x, y: decision.y, width: decision.width },
+      source: { x: source.x, y: source.y, width: source.width },
+      eyebrowCount: document.querySelectorAll('.eyebrow').length,
+    }
+  })
+  assert(overviewLayout.decision.x > overviewLayout.stage.x, '핵심 판단이 실행 단계 오른쪽에 배치되지 않았습니다.')
+  assert(overviewLayout.decision.width >= 800, `핵심 판단 영역이 충분히 넓지 않습니다: ${overviewLayout.decision.width}px`)
+  assert(overviewLayout.source.y > overviewLayout.stage.bottom, '출처가 실행 단계 아래에 배치되지 않았습니다.')
+  assert(overviewLayout.eyebrowCount === 0, '반복 영문 보조 라벨이 남아 있습니다.')
   checks.push(`readable typography ${JSON.stringify(fontSizes)}`)
+  checks.push(`calm two-column overview ${JSON.stringify(overviewLayout)}`)
   await desktop.screenshot({ path: artifactPath('desktop-evidence.png'), fullPage: true })
   checks.push('desktop evidence decision')
 
@@ -70,6 +87,7 @@ try {
   await desktop.getByRole('tab', { name: /보고서/ }).click()
   await desktop.getByText('SYNTHETIC', { exact: true }).waitFor()
   await desktop.getByText('과학적 결론이 아닌 UI 렌더링 확인 결과입니다.').count()
+  await desktop.screenshot({ path: artifactPath('desktop-report.png'), fullPage: true })
   checks.push('synthetic report disclosure')
 
   await desktop.getByRole('button', { name: '새 실행', exact: true }).first().click()
@@ -100,6 +118,25 @@ try {
   await desktop.keyboard.press('Escape')
   assert(await desktop.getByRole('dialog').count() === 0, 'Escape 키로 모달이 닫히지 않았습니다.')
   checks.push('dialog escape')
+
+  const compactDesktop = await browser.newPage({ viewport: { width: 1100, height: 900 }, deviceScaleFactor: 1 })
+  await observePage(compactDesktop, errors)
+  await compactDesktop.goto(baseUrl, { waitUntil: 'networkidle' })
+  await compactDesktop.getByRole('heading', { name: 'IBD 타깃 근거 검토' }).waitFor()
+  const compactLayout = await compactDesktop.evaluate(() => {
+    const decision = document.querySelector('.decision-panel').getBoundingClientRect()
+    const sidebar = document.querySelector('.sidebar').getBoundingClientRect()
+    return {
+      decisionWidth: decision.width,
+      horizontalOverflow: document.documentElement.scrollWidth - window.innerWidth,
+      sidebarRight: sidebar.right,
+    }
+  })
+  assert(compactLayout.decisionWidth >= 700, `중간 폭에서 판단 영역이 너무 좁습니다: ${compactLayout.decisionWidth}px`)
+  assert(compactLayout.horizontalOverflow <= 1, `중간 폭에서 가로 넘침이 있습니다: ${compactLayout.horizontalOverflow}px`)
+  assert(compactLayout.sidebarRight <= 0, `중간 폭에서 사이드바가 콘텐츠를 압축합니다: ${compactLayout.sidebarRight}px`)
+  await compactDesktop.screenshot({ path: artifactPath('compact-evidence.png'), fullPage: true })
+  checks.push(`compact desktop spacing ${JSON.stringify(compactLayout)}`)
 
   const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 })
   await observePage(mobile, errors)

@@ -180,7 +180,7 @@ function App() {
       <aside className={`sidebar${isSidebarOpen ? ' is-open' : ''}`}>
         <div className="brand-row">
           <div className="brand-mark">H2L</div>
-          <div className="brand-copy"><strong>H2L-Forge</strong><span>Research Workbench</span></div>
+          <div className="brand-copy"><strong>H2L-Forge</strong><span>신약개발 워크벤치</span></div>
           <button className="mobile-close icon-button" type="button" onClick={() => setIsSidebarOpen(false)} aria-label="메뉴 닫기"><X size={18} /></button>
         </div>
         <button className="new-run-button" type="button" onClick={() => setIsModalOpen(true)}><Plus size={16} /> 새 실행</button>
@@ -203,7 +203,7 @@ function App() {
         </div>
 
         <div className="sidebar-footer">
-          <div className="prototype-note"><Radio size={16} /><div><strong>Mock Harness adapter</strong><span>RunSnapshot contract · v1</span></div></div>
+          <div className="prototype-note"><Radio size={16} /><div><strong>모의 하네스 연결</strong><span>RunSnapshot 계약 · v1</span></div></div>
         </div>
       </aside>
 
@@ -213,9 +213,9 @@ function App() {
         <header className="topbar">
           <div className="topbar-left">
             <button className="mobile-menu icon-button" type="button" onClick={() => setIsSidebarOpen(true)} aria-label="메뉴 열기"><Menu size={19} /></button>
-            <span>Runs</span><span className="breadcrumb-separator">/</span><strong>{run.id}</strong>
+            <span>실행</span><span className="breadcrumb-separator">/</span><strong>{run.id}</strong>
           </div>
-          <div className="topbar-actions"><span className="adapter-state"><Database size={14} /> Snapshot adapter</span><div className="avatar" aria-label="사용자 프로필">VS</div></div>
+          <div className="topbar-actions"><span className="adapter-state"><Database size={14} /> 스냅샷 연결</span><div className="avatar" aria-label="사용자 프로필">VS</div></div>
         </header>
 
         <div className={`context-banner context-${run.classification}`} role="note">
@@ -245,7 +245,7 @@ function App() {
           <div><span>실행 시간</span><strong>{isRunning ? '진행 중' : formatDuration(run.durationMs)}</strong><small><Clock3 size={13} /> {isRunning ? '스냅샷 갱신 중' : `갱신 ${formatDateTime(run.updatedAt)}`}</small></div>
           <div><span>타깃 판단</span><strong>{snapshot.targets.length ? `기각 ${metrics.rejected} · 검토 ${metrics.review}` : '해당 없음'}</strong><small>채택된 타깃 0</small></div>
           <div><span>분자 출력</span><strong>{snapshot.molecules.length ? `${snapshot.molecules.length}개 UI fixture` : '0개 · 미실행'}</strong><small>{snapshot.molecules.length ? '모두 합성 테스트 레코드' : '결정 게이트에서 중단'}</small></div>
-          <div><span>데이터 분류</span><strong>{run.classification === 'synthetic' ? 'Synthetic' : 'Source snapshot'}</strong><small>{run.mode === 'snapshot' ? 'Mock adapter' : 'Live adapter'}</small></div>
+          <div><span>데이터 분류</span><strong>{run.classification === 'synthetic' ? '합성 데이터' : '출처 스냅샷'}</strong><small>{run.mode === 'snapshot' ? '모의 연결' : '실시간 연결'}</small></div>
         </section>
 
         <nav className="tabbar" role="tablist" aria-label="실행 상세 화면">
@@ -279,7 +279,7 @@ function App() {
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setIsModalOpen(false) }}>
           <section className="start-modal" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="start-title" aria-describedby="start-description">
             <div className="modal-header">
-              <div><span className="eyebrow">New harness run</span><h2 id="start-title">새 실행 시작</h2></div>
+              <div><h2 id="start-title">새 실행 시작</h2></div>
               <button className="icon-button" type="button" onClick={() => setIsModalOpen(false)} aria-label="닫기"><X size={18} /></button>
             </div>
             <p className="modal-intro" id="start-description">현재 프로토타입에서 검증할 고정 시나리오를 선택하세요. 자유 입력은 실제 정규화 API가 연결된 뒤 활성화합니다.</p>

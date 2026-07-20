@@ -53,7 +53,7 @@ export default function OverviewView({ snapshot, selectedStageId, onSelectStage,
     <div className="workspace-grid">
       <section className="stage-panel" aria-label="하네스 단계">
         <div className="panel-heading compact-heading">
-          <div><span className="eyebrow">Harness pipeline</span><h2>실행 단계</h2></div>
+          <div><h2>실행 단계</h2></div>
           <span className="completion-count">{processed}/{stages.length}</span>
         </div>
         <div className="stage-list">
@@ -76,7 +76,7 @@ export default function OverviewView({ snapshot, selectedStageId, onSelectStage,
 
       <main className="decision-panel">
         <div className="panel-heading">
-          <div><span className="eyebrow">Selected stage</span><h2>{selectedStage.label}</h2></div>
+          <div><h2>{selectedStage.label}</h2></div>
           <StatusBadge status={selectedStage.status} />
         </div>
 
@@ -125,11 +125,10 @@ export default function OverviewView({ snapshot, selectedStageId, onSelectStage,
         ) : (
           <div className={`generic-stage-output generic-${selectedStage.status}`}>
             <div className="generic-icon">{selectedStage.status === 'skipped' ? <ShieldOff size={24} /> : selectedStage.id === 'report' ? <FileText size={24} /> : <Database size={24} />}</div>
-            <span className="eyebrow">{selectedStage.agent}</span>
             <h3>{selectedStage.summary}</h3>
             <p>{selectedStage.output}</p>
             <dl className="stage-contract-grid">
-              <div><dt>Stage ID</dt><dd><code>{selectedStage.id}</code></dd></div>
+              <div><dt>단계 ID</dt><dd><code>{selectedStage.id}</code></dd></div>
               <div><dt>소요 시간</dt><dd>{formatDuration(selectedStage.durationMs)}</dd></div>
               <div><dt>재시도</dt><dd>{selectedStage.retryCount}회</dd></div>
               <div><dt>산출물</dt><dd>{selectedStage.outputArtifactIds.length}개</dd></div>
@@ -142,12 +141,12 @@ export default function OverviewView({ snapshot, selectedStageId, onSelectStage,
 
       <aside className="source-panel" aria-label="근거 출처">
         <div className="panel-heading compact-heading">
-          <div><span className="eyebrow">Provenance</span><h2>근거와 출처</h2></div>
+          <div><h2>근거와 출처</h2></div>
           <span className="source-total">{focusEvidence.length}</span>
         </div>
         <div className={`snapshot-notice notice-${run.classification}`}>
           <Database size={16} />
-          <div><strong>{run.classification === 'synthetic' ? '합성 UI 데이터' : '저장된 출처 스냅샷'}</strong><span>{run.mode === 'live' ? 'Live adapter' : 'Snapshot adapter'}</span></div>
+          <div><strong>{run.classification === 'synthetic' ? '합성 UI 데이터' : '저장된 출처 스냅샷'}</strong><span>{run.mode === 'live' ? '실시간 연결' : '스냅샷 연결'}</span></div>
         </div>
         <div className="source-list">
           {focusEvidence.length > 0 ? focusEvidence.map((item) => (
