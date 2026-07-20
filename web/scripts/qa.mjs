@@ -67,9 +67,14 @@ try {
       workspaceRadius: Number.parseFloat(workspaceStyle.borderRadius),
       workspaceShadow: workspaceStyle.boxShadow,
       panelBackgrounds: [style('.stage-panel').backgroundColor, style('.decision-panel').backgroundColor, style('.source-panel').backgroundColor],
+      panelHeadingBackgrounds: [style('.stage-panel > .panel-heading').backgroundColor, style('.decision-panel > .panel-heading').backgroundColor, style('.source-panel > .panel-heading').backgroundColor],
+      bodyFontFamily: style('body').fontFamily,
       decisionFontFamily: style('.decision-summary h3').fontFamily,
       sidebarBackground: style('.sidebar').backgroundColor,
+      brandBackground: style('.brand-mark').backgroundColor,
+      newRunBackground: style('.new-run-button').backgroundColor,
       primaryButtonBackground: style('.primary-button').backgroundColor,
+      metricAccentColors: [...document.querySelectorAll('.run-metrics > div')].map((element) => getComputedStyle(element, '::before').backgroundColor),
     }
   })
   assert(overviewLayout.decision.x > overviewLayout.stage.x, '핵심 판단이 실행 단계 오른쪽에 배치되지 않았습니다.')
@@ -81,9 +86,13 @@ try {
   assert(overviewLayout.workspaceRadius >= 6 && overviewLayout.workspaceRadius <= 8, `작업면 깊이 반경이 설계 범위를 벗어났습니다: ${overviewLayout.workspaceRadius}px`)
   assert(overviewLayout.workspaceShadow !== 'none', '핵심 작업면에 깊이 표현이 없습니다.')
   assert(new Set(overviewLayout.panelBackgrounds).size >= 2, `개요 패널의 층 구분이 부족합니다: ${overviewLayout.panelBackgrounds.join(', ')}`)
-  assert(/Iowan|AppleMyungjo|Noto Serif|Georgia/.test(overviewLayout.decisionFontFamily), `핵심 판단에 학술 제목 서체가 적용되지 않았습니다: ${overviewLayout.decisionFontFamily}`)
+  assert(new Set(overviewLayout.panelHeadingBackgrounds).size === 1, `패널 제목 표면이 서로 이어지지 않습니다: ${overviewLayout.panelHeadingBackgrounds.join(', ')}`)
+  assert(overviewLayout.decisionFontFamily === overviewLayout.bodyFontFamily, `핵심 판단과 본문의 서체 계열이 다릅니다: ${overviewLayout.decisionFontFamily} / ${overviewLayout.bodyFontFamily}`)
   assert(overviewLayout.sidebarBackground === 'rgb(248, 251, 252)', `사이드바가 밝은 연구 도구 테마가 아닙니다: ${overviewLayout.sidebarBackground}`)
   assert(overviewLayout.primaryButtonBackground === 'rgb(47, 111, 228)', `주요 동작 색상이 선명하지 않습니다: ${overviewLayout.primaryButtonBackground}`)
+  assert(overviewLayout.brandBackground === overviewLayout.primaryButtonBackground, `브랜드와 주요 동작의 주색이 다릅니다: ${overviewLayout.brandBackground} / ${overviewLayout.primaryButtonBackground}`)
+  assert(overviewLayout.newRunBackground === overviewLayout.primaryButtonBackground, `새 실행 버튼이 제품 주색과 다릅니다: ${overviewLayout.newRunBackground} / ${overviewLayout.primaryButtonBackground}`)
+  assert(new Set(overviewLayout.metricAccentColors).size === 1 && overviewLayout.metricAccentColors[0] === overviewLayout.primaryButtonBackground, `메트릭 강조색이 통일되지 않았습니다: ${overviewLayout.metricAccentColors.join(', ')}`)
   checks.push(`readable typography ${JSON.stringify(fontSizes)}`)
   checks.push(`layered vibrant overview ${JSON.stringify(overviewLayout)}`)
   await desktop.screenshot({ path: artifactPath('desktop-evidence.png'), fullPage: true })
@@ -104,8 +113,13 @@ try {
   await desktop.getByRole('tab', { name: /보고서/ }).click()
   await desktop.getByText('SYNTHETIC', { exact: true }).waitFor()
   await desktop.getByText('과학적 결론이 아닌 UI 렌더링 확인 결과입니다.').count()
+  const reportFonts = await desktop.evaluate(() => ({
+    body: getComputedStyle(document.body).fontFamily,
+    title: getComputedStyle(document.querySelector('.report-title-row h2')).fontFamily,
+  }))
+  assert(reportFonts.title === reportFonts.body, `보고서 제목과 제품 본문의 서체 계열이 다릅니다: ${reportFonts.title} / ${reportFonts.body}`)
   await desktop.screenshot({ path: artifactPath('desktop-report.png'), fullPage: true })
-  checks.push('synthetic report disclosure')
+  checks.push('synthetic report disclosure and typography unity')
 
   await desktop.getByRole('button', { name: '새 실행', exact: true }).first().click()
   const dialog = desktop.getByRole('dialog', { name: '새 실행 시작' })
