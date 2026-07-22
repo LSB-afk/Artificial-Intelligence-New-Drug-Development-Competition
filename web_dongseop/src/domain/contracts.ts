@@ -5,6 +5,8 @@ export type TabId =
   | 'failures'
   | 'audit'
   | 'report'
+  | 'organization'
+  | 'skills'
 
 export type DataMode = 'snapshot' | 'live'
 export type ScenarioKind = 'evidence-review' | 'molecule-ui-fixture'

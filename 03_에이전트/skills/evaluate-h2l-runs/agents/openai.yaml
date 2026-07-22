@@ -1,0 +1,4 @@
+interface:
+  display_name: "H2L 실행 평가"
+  short_description: "골든 케이스와 안전 불변식으로 하네스 실행을 회귀평가합니다"
+  default_prompt: "Use $evaluate-h2l-runs to evaluate a harness run against H2L golden cases."

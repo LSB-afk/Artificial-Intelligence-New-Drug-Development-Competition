@@ -3,6 +3,7 @@ import {
   AlertOctagon,
   Beaker,
   BookOpenCheck,
+  Boxes,
   CheckCircle2,
   Clock3,
   Database,
@@ -13,6 +14,7 @@ import {
   LayoutDashboard,
   ListChecks,
   Menu,
+  Network,
   Play,
   Plus,
   Radio,
@@ -30,7 +32,9 @@ import AuditView from './views/AuditView'
 import FailuresView from './views/FailuresView'
 import MoleculesView from './views/MoleculesView'
 import OverviewView from './views/OverviewView'
+import OrganizationView from './views/OrganizationView'
 import ReportView from './views/ReportView'
+import SkillsView from './views/SkillsView'
 import TargetsView from './views/TargetsView'
 
 const tabs: Array<{ id: TabId; label: string; icon: typeof LayoutDashboard }> = [
@@ -143,6 +147,7 @@ function App() {
 
   const handleSelectRun = async (runId: string) => {
     await selectRun(runId)
+    setActiveTab('overview')
     setIsSidebarOpen(false)
   }
 
@@ -166,6 +171,8 @@ function App() {
   }
 
   const renderActiveView = () => {
+    if (activeTab === 'organization') return <OrganizationView />
+    if (activeTab === 'skills') return <SkillsView />
     if (!snapshot) return null
     if (activeTab === 'targets') return <TargetsView targets={snapshot.targets} evidence={snapshot.evidence} selectedSymbol={selectedTarget} onSelect={setSelectedTarget} />
     if (activeTab === 'molecules') return <MoleculesView molecules={snapshot.molecules} scenarioKind={snapshot.run.scenarioKind} runStatus={snapshot.run.status} onOpenFixture={() => { void openMoleculeFixture() }} />
@@ -195,6 +202,8 @@ function App() {
     ? (progressUnits / snapshot.stages.length) * 100
     : 0)
   const monitorActive = ['overview', 'targets', 'molecules', 'failures'].includes(activeTab)
+  const isSystemView = activeTab === 'organization' || activeTab === 'skills'
+  const systemViewLabel = activeTab === 'organization' ? 'AI 조직도' : '에이전트 스킬'
   const selectedScenarioOption = scenarioOptions.find((option) => option.id === selectedScenario) ?? scenarioOptions[0]
 
   return (
@@ -211,6 +220,12 @@ function App() {
           <button aria-current={monitorActive ? 'page' : undefined} className={monitorActive ? 'is-active' : ''} type="button" onClick={() => setActiveTab('overview')}><Activity size={17} /> 실행 모니터</button>
           <button aria-current={activeTab === 'audit' ? 'page' : undefined} className={activeTab === 'audit' ? 'is-active' : ''} type="button" onClick={() => setActiveTab('audit')}><History size={17} /> 감사 기록</button>
           <button aria-current={activeTab === 'report' ? 'page' : undefined} className={activeTab === 'report' ? 'is-active' : ''} type="button" onClick={() => setActiveTab('report')}><BookOpenCheck size={17} /> 산출물</button>
+        </nav>
+
+        <div className="sidebar-section-heading"><span>AI 운영</span><span>11 agents</span></div>
+        <nav className="sidebar-nav" aria-label="AI 조직과 스킬">
+          <button aria-current={activeTab === 'organization' ? 'page' : undefined} className={activeTab === 'organization' ? 'is-active' : ''} type="button" onClick={() => { setActiveTab('organization'); setIsSidebarOpen(false) }}><Network size={17} /> AI 조직도</button>
+          <button aria-current={activeTab === 'skills' ? 'page' : undefined} className={activeTab === 'skills' ? 'is-active' : ''} type="button" onClick={() => { setActiveTab('skills'); setIsSidebarOpen(false) }}><Boxes size={17} /> 에이전트 스킬</button>
         </nav>
 
         <div className="sidebar-section-heading"><span>최근 실행</span><span>{runs.length}</span></div>
@@ -241,19 +256,19 @@ function App() {
         <header className="topbar">
           <div className="topbar-left">
             <button className="mobile-menu icon-button" type="button" onClick={() => setIsSidebarOpen(true)} aria-label="메뉴 열기"><Menu size={19} /></button>
-            <span>실행</span><span className="breadcrumb-separator">/</span><strong>{run.id}</strong>
+            <span>{isSystemView ? 'AI 운영' : '실행'}</span><span className="breadcrumb-separator">/</span><strong>{isSystemView ? systemViewLabel : run.id}</strong>
           </div>
           <div className="topbar-actions"><span className="adapter-state"><Database size={14} /> 스냅샷 연결</span><div className="avatar" aria-label="사용자 프로필">VS</div></div>
         </header>
 
-        <div className={`context-banner context-${run.classification}`} role="note">
+        {!isSystemView && <div className={`context-banner context-${run.classification}`} role="note">
           {run.classification === 'synthetic' ? <FlaskConical size={16} /> : <Database size={16} />}
           <strong>{run.classification === 'synthetic' ? '합성 UI fixture' : '저장된 출처 스냅샷'}</strong>
           <span>{run.classification === 'synthetic' ? '연구 결과가 아니며 화면 동작 확인에만 사용합니다.' : '현재 외부 API를 조회한 결과가 아닙니다. 관측일과 출처 ID를 함께 확인하세요.'}</span>
-        </div>
+        </div>}
         {error && <div className="error-banner" role="alert"><AlertOctagon size={15} />{error}</div>}
 
-        <section className="run-header">
+        {!isSystemView && <section className="run-header">
           <div className="run-title-block">
             <div className="run-title-line"><h1>{run.title}</h1><StatusBadge status={run.status} /></div>
             <div className="run-subtitle"><code>{run.diseaseId}</code><span>{run.disease}</span><span>시작 {formatDateTime(run.createdAt)}</span></div>
@@ -266,9 +281,9 @@ function App() {
             )}
             <button className="primary-button" type="button" onClick={() => setIsModalOpen(true)}><Play size={16} /> 새 실행</button>
           </div>
-        </section>
+        </section>}
 
-        {isRunning && (
+        {!isSystemView && isRunning && (
           <div className="run-activity-banner" role="status" aria-live="polite">
             <span className="activity-pulse" aria-hidden="true"><Activity size={17} /></span>
             <div className="activity-copy">
@@ -284,15 +299,15 @@ function App() {
           </div>
         )}
 
-        <section className="run-metrics" aria-label="실행 요약">
+        {!isSystemView && <section className="run-metrics" aria-label="실행 요약">
           <div className={isRunning ? 'live-metric' : undefined}><span>단계 처리</span><strong>{metrics.processed}/{snapshot.stages.length}</strong><div className={`progress-track${isRunning ? ' is-live' : ''}`}><i style={{ width: `${progressPercent}%` }} /></div><small>완료 {metrics.completed} · 주의 {metrics.warnings} · 미실행 {metrics.skipped}</small></div>
           <div className={isRunning ? 'live-metric' : undefined}><span>실행 시간</span><strong>{isRunning ? <LiveElapsed startedAt={run.createdAt} /> : formatDuration(run.durationMs)}</strong><small><Clock3 size={13} /> {isRunning ? `${activityStage?.label ?? '하네스'} 처리 중` : `갱신 ${formatDateTime(run.updatedAt)}`}</small></div>
           <div><span>타깃 판단</span><strong>{snapshot.targets.length ? `기각 ${metrics.rejected} · 검토 ${metrics.review}` : '해당 없음'}</strong><small>채택된 타깃 0</small></div>
           <div><span>분자 출력</span><strong>{snapshot.molecules.length ? `${snapshot.molecules.length}개 UI fixture` : '0개 · 미실행'}</strong><small>{snapshot.molecules.length ? '모두 합성 테스트 레코드' : '결정 게이트에서 중단'}</small></div>
           <div><span>데이터 분류</span><strong>{run.classification === 'synthetic' ? '합성 데이터' : '출처 스냅샷'}</strong><small>{run.mode === 'snapshot' ? '모의 연결' : '실시간 연결'}</small></div>
-        </section>
+        </section>}
 
-        <nav className="tabbar" role="tablist" aria-label="실행 상세 화면">
+        {!isSystemView && <nav className="tabbar" role="tablist" aria-label="실행 상세 화면">
           {tabs.map((tab, index) => {
             const Icon = tab.icon
             const count = tab.id === 'failures' ? snapshot.failures.length : tab.id === 'molecules' ? snapshot.molecules.length : undefined
@@ -314,9 +329,9 @@ function App() {
               </button>
             )
           })}
-        </nav>
+        </nav>}
 
-        <div aria-labelledby={`tab-${activeTab}`} className="content-area" id={`panel-${activeTab}`} role="tabpanel">{renderActiveView()}</div>
+        <div aria-labelledby={isSystemView ? undefined : `tab-${activeTab}`} className={`content-area${isSystemView ? ' system-content-area' : ''}`} id={`panel-${activeTab}`} role={isSystemView ? undefined : 'tabpanel'}>{renderActiveView()}</div>
       </div>
 
       {isModalOpen && (

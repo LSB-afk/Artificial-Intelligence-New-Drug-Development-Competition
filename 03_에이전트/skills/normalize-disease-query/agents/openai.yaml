@@ -1,0 +1,4 @@
+interface:
+  display_name: "질병 질의 정규화"
+  short_description: "질병명과 동의어를 표준 ID와 후보 목록으로 정규화합니다"
+  default_prompt: "Use $normalize-disease-query to normalize an IBD disease query and preserve ambiguity."

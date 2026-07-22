@@ -1,0 +1,4 @@
+interface:
+  display_name: "타깃 가설 반증"
+  short_description: "적응증별 실패 임상과 모순 근거를 우선적으로 검토합니다"
+  default_prompt: "Use $challenge-target-hypothesis to challenge an attractive target hypothesis with contradiction evidence."

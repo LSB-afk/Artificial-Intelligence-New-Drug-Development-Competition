@@ -1,0 +1,4 @@
+interface:
+  display_name: "적격 분자 최적화"
+  short_description: "게이트를 통과한 타깃의 후보 분자를 재현 가능하게 최적화합니다"
+  default_prompt: "Use $optimize-eligible-molecules to generate and rank candidates for an approved target."

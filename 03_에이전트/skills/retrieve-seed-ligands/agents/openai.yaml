@@ -1,0 +1,4 @@
+interface:
+  display_name: "시드 리간드 검색"
+  short_description: "적격 타깃에서 품질 조건을 만족하는 측정 리간드를 선별합니다"
+  default_prompt: "Use $retrieve-seed-ligands to retrieve quality-filtered seed ligands for an eligible target."

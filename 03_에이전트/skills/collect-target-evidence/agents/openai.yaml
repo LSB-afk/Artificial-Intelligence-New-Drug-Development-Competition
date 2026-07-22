@@ -1,0 +1,4 @@
+interface:
+  display_name: "타깃 근거 수집"
+  short_description: "공개 데이터베이스에서 추적 가능한 타깃 근거를 수집합니다"
+  default_prompt: "Use $collect-target-evidence to collect traceable target evidence for an indication."

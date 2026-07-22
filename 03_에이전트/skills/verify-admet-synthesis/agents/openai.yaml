@@ -1,0 +1,4 @@
+interface:
+  display_name: "ADMET·합성성 검증"
+  short_description: "후보의 독성 약물성 합성 가능성을 단계별로 검증합니다"
+  default_prompt: "Use $verify-admet-synthesis to verify ADMET and synthesis feasibility without overclaiming."
