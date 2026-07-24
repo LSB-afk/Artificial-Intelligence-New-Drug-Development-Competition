@@ -2,7 +2,9 @@ import {
   Activity,
   AlertOctagon,
   Beaker,
+  BookOpen,
   BookOpenCheck,
+  Bot,
   Boxes,
   CheckCircle2,
   Clock3,
@@ -19,7 +21,9 @@ import {
   Plus,
   Radio,
   ShieldCheck,
+  Sparkles,
   Square,
+  Users,
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -28,12 +32,17 @@ import { scenarioOptions } from './data/demoScenarios'
 import type { ScenarioKind, StageStatus, TabId } from './domain/contracts'
 import { formatDateTime, formatDuration, formatTime } from './lib/format'
 import { useHarnessWorkspace } from './state/useHarnessWorkspace'
+import AgentHarnessView from './views/AgentHarnessView'
+import AnalysisRequestView from './views/AnalysisRequestView'
 import AuditView from './views/AuditView'
+import EvidenceSearchView from './views/EvidenceSearchView'
 import FailuresView from './views/FailuresView'
 import MoleculesView from './views/MoleculesView'
 import OverviewView from './views/OverviewView'
 import OrganizationView from './views/OrganizationView'
+import RecommendationsView from './views/RecommendationsView'
 import ReportView from './views/ReportView'
+import RolesView from './views/RolesView'
 import SkillsView from './views/SkillsView'
 import TargetsView from './views/TargetsView'
 
@@ -151,6 +160,19 @@ function App() {
     setIsSidebarOpen(false)
   }
 
+  const handleStartFromRequest = async (scenario: ScenarioKind) => {
+    setSelectedScenario(scenario)
+    setIsCreating(true)
+    try {
+      const next = await createRun({ scenario, mode: 'snapshot' })
+      setSelectedStageId(next.stages[0]?.id ?? '')
+      setSelectedTarget(next.targets.find((target) => target.symbol === 'TYK2')?.symbol ?? next.targets[0]?.symbol ?? '')
+      setActiveTab(scenario === 'molecule-ui-fixture' ? 'molecules' : 'overview')
+    } finally {
+      setIsCreating(false)
+    }
+  }
+
   const openMoleculeFixture = async () => {
     const fixtureRun = runs.find((run) => run.scenarioKind === 'molecule-ui-fixture' && run.status !== 'running')
     if (fixtureRun) await selectRun(fixtureRun.id)
@@ -173,7 +195,12 @@ function App() {
   const renderActiveView = () => {
     if (activeTab === 'organization') return <OrganizationView />
     if (activeTab === 'skills') return <SkillsView />
+    if (activeTab === 'agent-harness') return <AgentHarnessView />
+    if (activeTab === 'roles') return <RolesView />
+    if (activeTab === 'analysis-request') return <AnalysisRequestView isCreating={isCreating} onStartRun={(scenario) => { void handleStartFromRequest(scenario) }} />
     if (!snapshot) return null
+    if (activeTab === 'evidence-search') return <EvidenceSearchView evidence={snapshot.evidence} />
+    if (activeTab === 'recommendations') return <RecommendationsView snapshot={snapshot} />
     if (activeTab === 'targets') return <TargetsView targets={snapshot.targets} evidence={snapshot.evidence} selectedSymbol={selectedTarget} onSelect={setSelectedTarget} />
     if (activeTab === 'molecules') return <MoleculesView molecules={snapshot.molecules} scenarioKind={snapshot.run.scenarioKind} runStatus={snapshot.run.status} onOpenFixture={() => { void openMoleculeFixture() }} />
     if (activeTab === 'failures') return <FailuresView failures={snapshot.failures} />
@@ -202,8 +229,19 @@ function App() {
     ? (progressUnits / snapshot.stages.length) * 100
     : 0)
   const monitorActive = ['overview', 'targets', 'molecules', 'failures'].includes(activeTab)
-  const isSystemView = activeTab === 'organization' || activeTab === 'skills'
-  const systemViewLabel = activeTab === 'organization' ? 'AI 조직도' : '에이전트 스킬'
+  const systemViewLabels: Partial<Record<TabId, string>> = {
+    organization: 'AI 조직도',
+    skills: '에이전트 스킬',
+    'analysis-request': 'AI 분석 요청',
+    'agent-harness': '신약개발 Agent 하네스',
+    'evidence-search': '근거/논문 검색',
+    recommendations: '실험 추천 큐',
+    roles: '담당자/권한',
+  }
+  const opsTabs: TabId[] = ['analysis-request', 'agent-harness', 'evidence-search', 'recommendations', 'roles']
+  const isSystemView = activeTab === 'organization' || activeTab === 'skills' || opsTabs.includes(activeTab)
+  const systemViewLabel = systemViewLabels[activeTab] ?? 'AI 조직도'
+  const systemGroupLabel = opsTabs.includes(activeTab) ? 'AI·자동화 관리' : 'AI 운영'
   const selectedScenarioOption = scenarioOptions.find((option) => option.id === selectedScenario) ?? scenarioOptions[0]
 
   return (
@@ -226,6 +264,15 @@ function App() {
         <nav className="sidebar-nav" aria-label="AI 조직과 스킬">
           <button aria-current={activeTab === 'organization' ? 'page' : undefined} className={activeTab === 'organization' ? 'is-active' : ''} type="button" onClick={() => { setActiveTab('organization'); setIsSidebarOpen(false) }}><Network size={17} /> AI 조직도</button>
           <button aria-current={activeTab === 'skills' ? 'page' : undefined} className={activeTab === 'skills' ? 'is-active' : ''} type="button" onClick={() => { setActiveTab('skills'); setIsSidebarOpen(false) }}><Boxes size={17} /> 에이전트 스킬</button>
+        </nav>
+
+        <div className="sidebar-section-heading"><span>AI·자동화 관리</span></div>
+        <nav className="sidebar-nav" aria-label="AI 자동화 관리">
+          <button aria-current={activeTab === 'analysis-request' ? 'page' : undefined} className={activeTab === 'analysis-request' ? 'is-active' : ''} type="button" onClick={() => { setActiveTab('analysis-request'); setIsSidebarOpen(false) }}><Sparkles size={17} /> AI 분석 요청</button>
+          <button aria-current={activeTab === 'agent-harness' ? 'page' : undefined} className={activeTab === 'agent-harness' ? 'is-active' : ''} type="button" onClick={() => { setActiveTab('agent-harness'); setIsSidebarOpen(false) }}><Bot size={17} /> 신약개발 Agent 하네스</button>
+          <button aria-current={activeTab === 'evidence-search' ? 'page' : undefined} className={activeTab === 'evidence-search' ? 'is-active' : ''} type="button" onClick={() => { setActiveTab('evidence-search'); setIsSidebarOpen(false) }}><BookOpen size={17} /> 근거/논문 검색</button>
+          <button aria-current={activeTab === 'recommendations' ? 'page' : undefined} className={activeTab === 'recommendations' ? 'is-active' : ''} type="button" onClick={() => { setActiveTab('recommendations'); setIsSidebarOpen(false) }}><FlaskConical size={17} /> 실험 추천 큐</button>
+          <button aria-current={activeTab === 'roles' ? 'page' : undefined} className={activeTab === 'roles' ? 'is-active' : ''} type="button" onClick={() => { setActiveTab('roles'); setIsSidebarOpen(false) }}><Users size={17} /> 담당자/권한</button>
         </nav>
 
         <div className="sidebar-section-heading"><span>최근 실행</span><span>{runs.length}</span></div>
@@ -256,7 +303,7 @@ function App() {
         <header className="topbar">
           <div className="topbar-left">
             <button className="mobile-menu icon-button" type="button" onClick={() => setIsSidebarOpen(true)} aria-label="메뉴 열기"><Menu size={19} /></button>
-            <span>{isSystemView ? 'AI 운영' : '실행'}</span><span className="breadcrumb-separator">/</span><strong>{isSystemView ? systemViewLabel : run.id}</strong>
+            <span>{isSystemView ? systemGroupLabel : '실행'}</span><span className="breadcrumb-separator">/</span><strong>{isSystemView ? systemViewLabel : run.id}</strong>
           </div>
           <div className="topbar-actions"><span className="adapter-state"><Database size={14} /> 스냅샷 연결</span><div className="avatar" aria-label="사용자 프로필">VS</div></div>
         </header>

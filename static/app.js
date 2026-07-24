@@ -12,6 +12,7 @@ const navRoot = document.getElementById("primary-nav");
 const pulseRoot = document.getElementById("ops-pulse");
 const syncRail = document.getElementById("sync-rail");
 const dialog = document.getElementById("action-dialog");
+const paletteEl = document.getElementById("command-palette");
 const toast = document.getElementById("toast");
 
 const viewDefinitions = [
@@ -837,9 +838,7 @@ function openApprovalDecision(id, decision) {
 async function handleClick(event) {
   const viewButton = event.target.closest("[data-view]");
   if (viewButton) {
-    state.activeView = viewButton.dataset.view;
-    renderAll();
-    viewRoot.focus();
+    setView(viewButton.dataset.view);
     return;
   }
 
@@ -848,6 +847,8 @@ async function handleClick(event) {
   const { action, id, value } = button.dataset;
   try {
     if (action === "close-dialog") dialog.close();
+    if (action === "command-palette") openPalette();
+    if (action === "toggle-theme") toggleTheme();
     if (action === "reload") await loadConsole({ focus: true });
     if (action === "create-project") openCreateProject();
     if (action === "edit-project") openEditProject(id);
@@ -874,8 +875,221 @@ function handleChange(event) {
   viewRoot.focus();
 }
 
+function setView(key) {
+  if (!views[key]) return;
+  state.activeView = key;
+  renderAll();
+  viewRoot.focus();
+}
+
+const THEME_KEY = "hades-theme";
+
+function storedTheme() {
+  try {
+    return window.localStorage.getItem(THEME_KEY);
+  } catch (error) {
+    return null;
+  }
+}
+
+function persistTheme(theme) {
+  try {
+    window.localStorage.setItem(THEME_KEY, theme);
+  } catch (error) {
+    /* Private mode or blocked storage: keep the in-page choice only. */
+  }
+}
+
+function applyTheme(theme, { persist = true } = {}) {
+  const value = theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = value;
+  if (persist) persistTheme(value);
+  const button = document.querySelector('[data-action="toggle-theme"]');
+  if (button) {
+    button.textContent = value === "dark" ? "라이트" : "다크";
+    button.setAttribute("aria-label", value === "dark" ? "라이트 테마로 전환" : "다크 관제 테마로 전환");
+    button.setAttribute("aria-pressed", value === "dark" ? "true" : "false");
+  }
+}
+
+function initTheme() {
+  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  applyTheme(storedTheme() || (prefersDark ? "dark" : "light"), { persist: false });
+}
+
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  applyTheme(next);
+  showToast(next === "dark" ? "다크 관제 테마로 전환했습니다." : "라이트 테마로 전환했습니다.");
+}
+
+const palette = { items: [], index: 0, ready: false };
+
+function commandRegistry() {
+  const commands = viewDefinitions.map(([key, label], position) => ({
+    group: "이동",
+    label: `${label} 보기`,
+    hint: String(position + 1),
+    keywords: `${key} view ${label}`,
+    run: () => setView(key),
+  }));
+  commands.push(
+    { group: "작업", label: "태스크 생성", hint: "N", keywords: "task new create 태스크 생성", run: openCreateTask },
+    { group: "작업", label: "프로젝트 생성", hint: "", keywords: "project new create 프로젝트 생성", run: openCreateProject },
+    { group: "작업", label: "콘솔 새로고침", hint: "", keywords: "reload refresh 새로고침 동기화", run: () => loadConsole({ focus: true }) },
+    { group: "보기", label: "테마 전환 (다크 / 라이트)", hint: "", keywords: "theme dark light 다크 라이트 테마", run: toggleTheme },
+  );
+  return commands;
+}
+
+function buildPalette() {
+  paletteEl.innerHTML = `
+    <div class="cmdk">
+      <div class="cmdk-head">
+        <span class="cmdk-badge">명령</span>
+        <input class="cmdk-input" type="text" placeholder="뷰 이동 또는 작업 검색…" aria-label="명령 검색" aria-controls="cmdk-list" autocomplete="off" spellcheck="false">
+      </div>
+      <ul id="cmdk-list" class="cmdk-list" role="listbox" aria-label="명령 목록"></ul>
+      <footer class="cmdk-footer">
+        <span><kbd>↑</kbd><kbd>↓</kbd> 이동</span>
+        <span><kbd>Enter</kbd> 실행</span>
+        <span><kbd>Esc</kbd> 닫기</span>
+      </footer>
+    </div>
+  `;
+  const input = paletteEl.querySelector(".cmdk-input");
+  input.addEventListener("input", () => renderPaletteList(input.value));
+  input.addEventListener("keydown", onPaletteKeydown);
+  const list = paletteEl.querySelector(".cmdk-list");
+  list.addEventListener("click", (event) => {
+    const item = event.target.closest("[data-cmd-index]");
+    if (item) runPaletteItem(Number(item.dataset.cmdIndex));
+  });
+  list.addEventListener("mousemove", (event) => {
+    const item = event.target.closest("[data-cmd-index]");
+    if (item) setPaletteIndex(Number(item.dataset.cmdIndex));
+  });
+  paletteEl.addEventListener("click", (event) => {
+    if (event.target === paletteEl) closePalette();
+  });
+  palette.ready = true;
+}
+
+function openPalette() {
+  if (!palette.ready) buildPalette();
+  const input = paletteEl.querySelector(".cmdk-input");
+  input.value = "";
+  renderPaletteList("");
+  if (!paletteEl.open) paletteEl.showModal();
+  input.focus();
+}
+
+function closePalette() {
+  if (paletteEl.open) paletteEl.close();
+}
+
+function renderPaletteList(query) {
+  const all = commandRegistry();
+  const needle = String(query || "").trim().toLowerCase();
+  palette.items = needle
+    ? all.filter((command) => `${command.label} ${command.group} ${command.keywords}`.toLowerCase().includes(needle))
+    : all;
+  const list = paletteEl.querySelector(".cmdk-list");
+  if (!palette.items.length) {
+    list.innerHTML = `<li class="cmdk-empty" role="status">일치하는 명령이 없습니다.</li>`;
+    return;
+  }
+  let html = "";
+  let lastGroup = null;
+  palette.items.forEach((command, index) => {
+    if (command.group !== lastGroup) {
+      html += `<li class="cmdk-group" aria-hidden="true">${escapeHtml(command.group)}</li>`;
+      lastGroup = command.group;
+    }
+    html += `
+      <li class="cmdk-item" role="option" id="cmdk-opt-${index}" data-cmd-index="${index}" aria-selected="false">
+        <span class="cmdk-label">${escapeHtml(command.label)}</span>
+        ${command.hint ? `<kbd class="cmdk-hint">${escapeHtml(command.hint)}</kbd>` : ""}
+      </li>
+    `;
+  });
+  list.innerHTML = html;
+  setPaletteIndex(0);
+}
+
+function setPaletteIndex(index) {
+  if (!palette.items.length) return;
+  palette.index = Math.max(0, Math.min(index, palette.items.length - 1));
+  const input = paletteEl.querySelector(".cmdk-input");
+  paletteEl.querySelectorAll(".cmdk-item").forEach((element) => {
+    const selected = Number(element.dataset.cmdIndex) === palette.index;
+    element.setAttribute("aria-selected", selected ? "true" : "false");
+    if (selected) {
+      element.scrollIntoView({ block: "nearest" });
+      input.setAttribute("aria-activedescendant", element.id);
+    }
+  });
+}
+
+function onPaletteKeydown(event) {
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    setPaletteIndex(palette.index + 1);
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    setPaletteIndex(palette.index - 1);
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    runPaletteItem(palette.index);
+  }
+}
+
+function runPaletteItem(index) {
+  const command = palette.items[index];
+  if (!command) return;
+  closePalette();
+  try {
+    command.run();
+  } catch (error) {
+    showToast(error.message || "명령 실행에 실패했습니다.", "error");
+  }
+}
+
+function onGlobalKeydown(event) {
+  if ((event.metaKey || event.ctrlKey) && (event.key === "k" || event.key === "K")) {
+    event.preventDefault();
+    if (paletteEl.open) closePalette();
+    else openPalette();
+    return;
+  }
+  const target = event.target;
+  const typing = target && (target.matches?.("input, textarea, select") || target.isContentEditable);
+  if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+  if (dialog.open || paletteEl.open) return;
+  if (event.key === "?") {
+    event.preventDefault();
+    openPalette();
+    return;
+  }
+  if (/^[1-8]$/.test(event.key)) {
+    const definition = viewDefinitions[Number(event.key) - 1];
+    if (definition) {
+      event.preventDefault();
+      setView(definition[0]);
+    }
+    return;
+  }
+  if (event.key === "n" || event.key === "N") {
+    event.preventDefault();
+    openCreateTask();
+  }
+}
+
 document.addEventListener("click", handleClick);
 document.addEventListener("change", handleChange);
+document.addEventListener("keydown", onGlobalKeydown);
 dialog.addEventListener("cancel", () => showToast("작업을 취소했습니다."));
 
+buildPalette();
+initTheme();
 loadConsole();

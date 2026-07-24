@@ -37,8 +37,7 @@
 │   ├── console_store.py  # 하데스 콘솔 JSON 관리 상태 저장소
 │   ├── server.py         # stdlib HTTP 서버와 /api/* 라우팅
 │   └── ...
-├── tests/            # 평가/회귀 테스트
-└── web_dongseop/     # 동섭 프론트엔드 프로토타입
+└── tests/            # 평가/회귀 테스트
 ```
 
 ## 실행 방법

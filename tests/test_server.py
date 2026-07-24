@@ -136,6 +136,27 @@ def test_app_js_declares_all_management_views():
         assert view in body
 
 
+def test_command_palette_and_theme_controls_are_wired():
+    _, _, html = route("GET", "/")
+    assert 'id="command-palette"' in html
+    assert 'data-action="command-palette"' in html
+    assert 'data-action="toggle-theme"' in html
+    assert "hades-theme" in html  # inline pre-paint theme init avoids a flash
+
+    _, _, js = route("GET", "/static/app.js")
+    assert "function openPalette" in js
+    assert "function toggleTheme" in js
+    assert "function onGlobalKeydown" in js
+    assert 'action === "command-palette"' in js
+    assert 'action === "toggle-theme"' in js
+    assert "hades-theme" in js
+
+    _, _, css = route("GET", "/static/styles.css")
+    assert "#command-palette" in css
+    assert ".cmdk-item" in css
+    assert '[data-theme="dark"]' in css
+
+
 def test_blocked_task_resume_uses_checkout_dialog_and_creates_a_new_run():
     actions = _app_js_function("taskActions", "renderAgents")
     assert (
