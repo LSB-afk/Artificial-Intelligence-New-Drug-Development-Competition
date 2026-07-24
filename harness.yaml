@@ -38,6 +38,7 @@ evals:
   rubric: "evals/rubric.md"
   failure_modes: "evals/failure-modes.md"
   decision_cases: "evals/decision_cases.json"
+  molopt_pool: "tests/fixtures/molopt/pool.json"
 
 implementation:
   design_spec: "docs/superpowers/specs/2026-07-19-jb-derived-drug-harness-design.md"
@@ -48,6 +49,9 @@ implementation:
     replay: "src/h2l/replay.py"
     eval_runner: "src/h2l/eval_runner.py"
     cli: "src/h2l/cli.py"
+    tools: "src/h2l/tools.py"
+    molopt: "src/h2l/molopt.py"
+    molopt_eval: "src/h2l/molopt_eval.py"
     console_store: "src/h2l/console_store.py"
     server: "src/h2l/server.py"
   console:
@@ -124,6 +128,10 @@ decisions:
     date: "2026-07-19"
     decision: "Adapt Paperclip management patterns only for software operations in Hades Console and keep them isolated from scientific authority."
     rationale: "Projects, tasks, agents, runs, costs, approvals, and activity events improve operational auditability, but console mutations must not change evidence snapshots, target decisions, molecule eligibility, or evaluation outputs."
+  - id: "D-008"
+    date: "2026-07-20"
+    decision: "Implement field-2 molecular optimization as an offline, METHOD_ONLY tool-adapter loop with a proxy-only vs multi-objective ablation, instead of fine-tuning the LLM."
+    rationale: "Inference accuracy in drug discovery comes from versioned property/synthesis tools and evidence, not LLM weights. Deterministic reference adapters expose a (molecule)->ToolResult seam for ADMET-AI/QSAR/SA-RAscore, keep measured/model/proxy separate, and the seeded ablation shows the multi-objective candidate beats the similarity-only baseline (selection accuracy 1.00 vs 0.43) byte-reproducibly."
 
 open_questions:
   - id: "Q-001"

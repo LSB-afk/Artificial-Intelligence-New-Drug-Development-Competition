@@ -293,6 +293,24 @@ export const skillCategories: Array<'전체' | SkillCategory> = [
   '검증·거버넌스',
 ]
 
+export interface H2LRole {
+  id: string
+  name: string
+  scope: string
+  canApprove: string[]
+  responsibility: string
+  team: string
+}
+
+// 운영 역할과 승인 권한. AI 에이전트는 제안만 하고, 아래 역할이 범위별로 사람 승인을 수행한다.
+export const h2lRoles: H2LRole[] = [
+  { id: 'role-pi', name: '연구책임자(PI)', scope: 'research', canApprove: ['research', 'preclinical'], responsibility: '타깃 진입과 분자 루프의 최종 연구 승인', team: 'Executive' },
+  { id: 'role-clinical', name: '임상 담당', scope: 'clinical', canApprove: ['clinical'], responsibility: '임상 설계·안전성 검토 승인', team: 'Molecule Discovery' },
+  { id: 'role-ra', name: '규제(RA) 담당', scope: 'regulatory', canApprove: ['regulatory'], responsibility: 'IND·규제 제출 자료 승인', team: 'Governance' },
+  { id: 'role-qa', name: 'QA/감사 담당', scope: 'quality', canApprove: ['quality', 'audit'], responsibility: '근거·변경 이력·감사 로그 점검', team: 'Governance' },
+  { id: 'role-ops', name: '운영자', scope: 'ops', canApprove: [], responsibility: '요청 라우팅과 조회(승인 권한 없음)', team: 'Executive' },
+]
+
 export function agentById(id: string) {
   return h2lAgents.find((agent) => agent.id === id)
 }

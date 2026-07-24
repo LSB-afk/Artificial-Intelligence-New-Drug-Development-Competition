@@ -14,6 +14,8 @@ import tempfile
 from pathlib import Path
 
 from h2l.eval_runner import load_cases, run_evaluation
+from h2l.molopt import optimize
+from h2l.molopt_eval import load_pool, run_molopt_eval
 from h2l.registry import SnapshotRegistry
 from h2l.replay import ClinicalContradictionCritic, DrugDiscoveryHarness, SnapshotEvidenceAdapter
 
@@ -46,6 +48,30 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_molopt(args: argparse.Namespace) -> int:
+    doc = json.loads(Path(args.pool).read_text(encoding="utf-8"))
+    result = optimize(
+        doc["pool"],
+        doc["reference_actives"],
+        run_mode=args.run_mode,
+        target_decision=args.target_decision,
+        top_k=doc.get("top_k", 5),
+        seed=doc.get("seed", 42),
+    )
+    print(_dumps(result))
+    return 0
+
+
+def cmd_molopt_eval(args: argparse.Namespace) -> int:
+    report = run_molopt_eval(load_pool(Path(args.pool)))
+    rendered = _dumps(report)
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.out).write_text(rendered + "\n", encoding="utf-8")
+    print(rendered)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="h2l", description="Evidence-critical drug-discovery decision harness.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -58,6 +84,17 @@ def build_parser() -> argparse.ArgumentParser:
     eval_p.add_argument("--cases", required=True, help="path to the decision cases JSON")
     eval_p.add_argument("--out", help="optional path to write the report JSON")
     eval_p.set_defaults(func=cmd_eval)
+
+    molopt_p = sub.add_parser("molopt", help="run the eligibility-gated molecular optimization loop")
+    molopt_p.add_argument("--pool", required=True, help="path to a candidate pool JSON")
+    molopt_p.add_argument("--run-mode", default="METHOD_ONLY", choices=["METHOD_ONLY", "SCIENTIFIC", "REJECTION_DEMO"])
+    molopt_p.add_argument("--target-decision", default=None, help="ADVANCE/HOLD/REJECT of the eligible target")
+    molopt_p.set_defaults(func=cmd_molopt)
+
+    molopt_eval_p = sub.add_parser("molopt-eval", help="proxy-only vs multi-objective molecular ranking ablation")
+    molopt_eval_p.add_argument("--pool", required=True, help="path to a labeled candidate pool JSON")
+    molopt_eval_p.add_argument("--out", help="optional path to write the report JSON")
+    molopt_eval_p.set_defaults(func=cmd_molopt_eval)
 
     return parser
 

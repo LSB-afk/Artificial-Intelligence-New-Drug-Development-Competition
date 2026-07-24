@@ -7,6 +7,11 @@ export type TabId =
   | 'report'
   | 'organization'
   | 'skills'
+  | 'analysis-request'
+  | 'agent-harness'
+  | 'evidence-search'
+  | 'recommendations'
+  | 'roles'
 
 export type DataMode = 'snapshot' | 'live'
 export type ScenarioKind = 'evidence-review' | 'molecule-ui-fixture'
