@@ -15,7 +15,13 @@ touching orchestration or fine-tuning the LLM.
 """
 from __future__ import annotations
 
+import os
+from types import SimpleNamespace
+
 EVIDENCE_TYPES = {"measured", "model", "proxy", "unknown"}
+
+REFERENCE_BACKEND = "reference"
+RDKIT_BACKEND = "rdkit"
 
 # Names of the reference tool lineage, in stable order (used for traceability).
 DEFAULT_TOOL_NAMES = [
@@ -46,6 +52,8 @@ def tool_result(name, value, evidence_type, confidence, limitation, evidence=Non
         "confidence": _round(confidence),
         "limitation": limitation,
         "evidence": list(evidence or []),
+        "backend": REFERENCE_BACKEND,
+        "backend_version": None,
     }
 
 
@@ -150,3 +158,41 @@ def safety_alerts(mol: dict) -> dict:
         0.6,
         "structural alert flags from provided annotations; replace with RDKit filter catalogs",
     )
+
+
+# ---- backend selection -------------------------------------------------
+REFERENCE_ADAPTERS = SimpleNamespace(
+    name=REFERENCE_BACKEND,
+    version=None,
+    druglikeness=druglikeness,
+    similarity_proxy=similarity_proxy,
+    admet_risk=admet_risk,
+    synthesizability=synthesizability,
+    safety_alerts=safety_alerts,
+)
+
+
+def resolve_backend(name: str | None = None) -> SimpleNamespace:
+    """Return the adapter set to score with.
+
+    The reference backend is the default so the core stays dependency-free and
+    the seeded evaluations remain byte-reproducible. ``H2L_CHEM_BACKEND=rdkit``
+    (or an explicit ``name``) swaps in real cheminformatics at the same
+    ``(molecule) -> ToolResult`` seam; nothing else in the loop changes.
+    """
+    requested = (name or os.environ.get("H2L_CHEM_BACKEND") or REFERENCE_BACKEND).strip().lower()
+    if requested == REFERENCE_BACKEND:
+        return REFERENCE_ADAPTERS
+    if requested == RDKIT_BACKEND:
+        from h2l import chem
+
+        return SimpleNamespace(
+            name=RDKIT_BACKEND,
+            version=chem.version(),
+            druglikeness=chem.druglikeness,
+            similarity_proxy=chem.similarity_proxy,
+            admet_risk=chem.admet_risk,
+            synthesizability=chem.synthesizability,
+            safety_alerts=chem.safety_alerts,
+        )
+    raise ValueError(f"unknown chemistry backend: {requested!r} (expected 'reference' or 'rdkit')")

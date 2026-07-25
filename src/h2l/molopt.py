@@ -18,16 +18,7 @@ Operating invariants enforced here, not just documented:
 """
 from __future__ import annotations
 
-from h2l.tools import (
-    DEFAULT_TOOL_NAMES,
-    _clamp,
-    _round,
-    admet_risk,
-    druglikeness,
-    safety_alerts,
-    similarity_proxy,
-    synthesizability,
-)
+from h2l.tools import DEFAULT_TOOL_NAMES, _clamp, _round, resolve_backend
 
 SIMILARITY_BAND = (0.30, 0.85)
 HARD_SA_MAX = 6.5
@@ -78,12 +69,20 @@ def entry_gate(run_mode: str, target_decision: str | None) -> dict:
     }
 
 
-def score_molecule(mol: dict, reference_actives: list[dict]) -> dict:
-    dl = druglikeness(mol)
-    sim = similarity_proxy(mol, reference_actives)
-    adm = admet_risk(mol)
-    syn = synthesizability(mol)
-    saf = safety_alerts(mol)
+def _as_backend(backend):
+    """Accept a backend name, an already-resolved adapter set, or None."""
+    if backend is None or isinstance(backend, str):
+        return resolve_backend(backend)
+    return backend
+
+
+def score_molecule(mol: dict, reference_actives: list[dict], *, backend=None) -> dict:
+    tools = _as_backend(backend)
+    dl = tools.druglikeness(mol)
+    sim = tools.similarity_proxy(mol, reference_actives)
+    adm = tools.admet_risk(mol)
+    syn = tools.synthesizability(mol)
+    saf = tools.safety_alerts(mol)
 
     qed = dl["value"]["qed"]
     tanimoto = sim["value"]["tanimoto"]
@@ -147,6 +146,7 @@ def score_molecule(mol: dict, reference_actives: list[dict]) -> dict:
         "composite_score": _round(composite),
         "hard_fail": sorted(hard_fail),
         "tool_lineage": [dl["tool"], sim["tool"], adm["tool"], syn["tool"], saf["tool"]],
+        "backend": tools.name,
         "evidence": list(mol.get("evidence", [])),
     }
 
@@ -197,12 +197,15 @@ def _dedupe(items: list[dict]) -> list[dict]:
     return out
 
 
-def optimize(pool, reference_actives, *, run_mode="METHOD_ONLY", target_decision=None, top_k=TOP_K, seed=42) -> dict:
+def optimize(pool, reference_actives, *, run_mode="METHOD_ONLY", target_decision=None, top_k=TOP_K, seed=42, backend=None) -> dict:
     gate = entry_gate(run_mode, target_decision)
+    tools = resolve_backend(backend)
     base = {
         **gate,
         "seed": seed,
         "tool_lineage": DEFAULT_TOOL_NAMES,
+        "backend": tools.name,
+        "backend_version": tools.version,
         "candidates": [],
         "rejected": [],
         "scored_count": 0,
@@ -212,7 +215,7 @@ def optimize(pool, reference_actives, *, run_mode="METHOD_ONLY", target_decision
     if gate["blocked"]:
         return base
 
-    scored = [score_molecule(mol, reference_actives) for mol in sorted(pool, key=lambda m: m["candidate_id"])]
+    scored = [score_molecule(mol, reference_actives, backend=tools) for mol in sorted(pool, key=lambda m: m["candidate_id"])]
     gate_passers = [s for s in scored if not s["hard_fail"]]
     deduped = _dedupe(gate_passers)
     front = _pareto_filter(deduped)
