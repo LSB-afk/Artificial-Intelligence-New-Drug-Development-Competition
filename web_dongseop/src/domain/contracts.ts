@@ -12,6 +12,7 @@ export type TabId =
   | 'evidence-search'
   | 'recommendations'
   | 'roles'
+  | 'reasoning'
 
 export type DataMode = 'snapshot' | 'live'
 export type ScenarioKind = 'evidence-review' | 'molecule-ui-fixture'
@@ -206,11 +207,39 @@ export interface CreateRunInput {
   mode: DataMode
 }
 
+/**
+ * 해설 출처. `model`은 로컬 LLM이 작성하고 가드레일을 통과한 문장,
+ * `template`은 결정론적으로 생성된 문장입니다. 두 경우 모두 사실은
+ * 결정 엔진이 계산한 값이며 해설이 새로운 사실을 만들지 않습니다.
+ */
+export type ExplanationSource = 'model' | 'template'
+
+export interface Explanation {
+  targetSymbol: string
+  text: string
+  source: ExplanationSource
+  model: string | null
+  /** 모델 대신 템플릿을 쓴 이유. 모델 문장을 채택했으면 null입니다. */
+  fallbackReason: string | null
+  /** 가드레일이 잡아낸 위반 항목. 비어 있으면 검사를 통과했습니다. */
+  violations: string[]
+  decision: string
+  ruleIds: string[]
+  evidenceIds: string[]
+  generatedAt: string
+}
+
+export interface ExplainInput {
+  targetSymbol: string
+  disease: string
+}
+
 export interface HarnessClient {
   listRuns(): Promise<RunSummary[]>
   getRun(runId: string): Promise<RunSnapshot>
   createRun(input: CreateRunInput): Promise<RunSnapshot>
   cancelRun(runId: string): Promise<RunSnapshot>
   markReviewed(runId: string): Promise<RunSnapshot>
+  explainTarget(input: ExplainInput, snapshot: RunSnapshot): Promise<Explanation>
   subscribe(runId: string, listener: (snapshot: RunSnapshot) => void): () => void
 }

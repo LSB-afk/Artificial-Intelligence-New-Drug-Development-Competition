@@ -59,7 +59,7 @@ PYTHONPATH=src python3 -m h2l.cli eval --cases evals/decision_cases.json --out a
 PYTHONPATH=src python3 -m h2l.server --host 127.0.0.1 --port 8765
 ```
 
-`python3 -m pytest`는 현재 105개 테스트를 수집한다. 이 중 4개 real-socket HTTP 테스트는 실행 환경이 `127.0.0.1` 바인드를 허용해야 통과한다.
+`python3 -m pytest`는 현재 145개 테스트를 수집한다. 이 중 4개 real-socket HTTP 테스트는 실행 환경이 `127.0.0.1` 바인드를 허용해야 통과한다.
 
 코어가 보장하는 4가지 이식 불변조건:
 
@@ -67,6 +67,38 @@ PYTHONPATH=src python3 -m h2l.server --host 127.0.0.1 --port 8765
 2. 타깃 판단과 분자 단계 사이에 결정론적 상태 전이와 사람 승인을 둔다(`state_machine`).
 3. 도구가 실패해도 고정 스냅샷으로 동일한 판단을 재생한다(`replay`, snapshot-first fallback).
 4. 평가 plane은 과학 상태를 변경하지 못하며, 같은 seed로 두 번 실행하면 byte-equivalent하다(`eval_runner`).
+
+## 판단 해설 (로컬 모델)
+
+`src/h2l/llm.py`는 이미 계산된 판단을 사람이 읽을 문장으로 옮기는 계층이다. **모델에게 사실 권한은 없다.** 모델은 결정 코어가 만든 fact set만 받고, 출력은 표시 전에 검사를 통과해야 한다.
+
+가드레일이 차단하는 것:
+
+- fact set에 없는 숫자, 근거 ID, 논문/임상시험 인용
+- 판정을 뒤집는 서술, `ADVANCE`가 아닌데 치료 효과·유효성을 주장하는 문장
+- 사고 과정(chain-of-thought) 노출, 길이 초과, 언어 불일치
+
+하나라도 걸리면 모델 문장을 **고치지 않고 버리고** 결정론적 템플릿으로 대체한다. 감사 레코드(`ModelCalled`)에는 프롬프트 해시만 남기고 프롬프트 본문과 추론 과정은 저장하지 않는다.
+
+기본값은 OFF이며, 이 상태에서는 네트워크 I/O가 전혀 없고 평가는 그대로 재현 가능하다.
+
+```bash
+# 템플릿만 사용 (기본값, 완전 오프라인)
+curl "http://127.0.0.1:8765/api/explain?hypothesis=IBD:TYK2"
+
+# 로컬 Ollama 사용
+H2L_LLM_ENABLED=1 H2L_LLM_MODEL=qwen2.5:7b-instruct \
+PYTHONPATH=src python3 -m h2l.server --host 127.0.0.1 --port 8765
+```
+
+| 환경변수 | 기본값 | 설명 |
+|---|---|---|
+| `H2L_LLM_ENABLED` | `0` | 로컬 모델 호출 여부. 끄면 템플릿만 쓴다. |
+| `H2L_LLM_HOST` | `http://127.0.0.1:11434` | Ollama 주소 |
+| `H2L_LLM_MODEL` | `qwen2.5:7b-instruct` | 모델 이름 |
+| `H2L_LLM_TIMEOUT_S` | `20` | 응답 대기 한도. 초과하면 템플릿으로 폴백한다. |
+
+Ollama가 꺼져 있거나 응답이 늦어도 `/api/explain`은 200과 템플릿 문장을 돌려준다. 콘솔은 출처 칩으로 `로컬 모델`과 `결정론적 템플릿`을 구분해 보여준다.
 
 ## 하데스 콘솔
 

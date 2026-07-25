@@ -3353,3 +3353,80 @@ body { font-size: 15px; }
 }
 
 .ops-request-card > .primary-button { grid-column: 2; justify-self: start; margin-top: 8px; }
+
+/* 판단 해설 — 기존 system-page 스타일을 그대로 쓰고, 카드 내부만 정의합니다. */
+.ops-reason-list {
+  display: grid;
+  gap: 12px;
+}
+
+.ops-reason-card {
+  padding: 15px 17px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--blue);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-control);
+}
+
+.ops-reason-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ops-reason-title strong { color: var(--ink); font-size: 14px; }
+
+.ops-reason-text {
+  margin: 11px 0 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.ops-reason-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 11px;
+  font-size: 11.5px;
+}
+
+.ops-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+
+.ops-source.source-model { color: var(--teal-dark); background: var(--teal-soft); }
+.ops-source.source-template { color: var(--ink-soft); background: var(--surface-muted); }
+.ops-source.source-decision { color: var(--ink-soft); background: var(--surface-muted); }
+
+.ops-reason-guard {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  color: var(--amber);
+  font-size: 11.5px;
+  line-height: 1.55;
+  background: var(--amber-soft);
+  border-radius: 5px;
+}
+
+.ops-reason-note {
+  margin: 10px 0 0;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+@media (max-width: 640px) {
+  .ops-reason-head { flex-direction: column; align-items: flex-start; }
+}

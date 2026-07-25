@@ -6,6 +6,7 @@ import {
   BookOpenCheck,
   Bot,
   Boxes,
+  BrainCircuit,
   CheckCircle2,
   Clock3,
   Database,
@@ -40,6 +41,7 @@ import FailuresView from './views/FailuresView'
 import MoleculesView from './views/MoleculesView'
 import OverviewView from './views/OverviewView'
 import OrganizationView from './views/OrganizationView'
+import ReasoningView from './views/ReasoningView'
 import RecommendationsView from './views/RecommendationsView'
 import ReportView from './views/ReportView'
 import RolesView from './views/RolesView'
@@ -73,7 +75,7 @@ function LiveElapsed({ startedAt }: { startedAt: string }) {
 function App() {
   const {
     runs, snapshot, selectedRunId, isLoading, error,
-    selectRun, createRun, cancelRun, markReviewed,
+    selectRun, createRun, cancelRun, markReviewed, explainTarget,
   } = useHarnessWorkspace()
   const [activeTab, setActiveTab] = useState<TabId>('overview')
   const [selectedStageId, setSelectedStageId] = useState('critic')
@@ -201,6 +203,7 @@ function App() {
     if (!snapshot) return null
     if (activeTab === 'evidence-search') return <EvidenceSearchView evidence={snapshot.evidence} />
     if (activeTab === 'recommendations') return <RecommendationsView snapshot={snapshot} />
+    if (activeTab === 'reasoning') return <ReasoningView snapshot={snapshot} onExplain={explainTarget} />
     if (activeTab === 'targets') return <TargetsView targets={snapshot.targets} evidence={snapshot.evidence} selectedSymbol={selectedTarget} onSelect={setSelectedTarget} />
     if (activeTab === 'molecules') return <MoleculesView molecules={snapshot.molecules} scenarioKind={snapshot.run.scenarioKind} runStatus={snapshot.run.status} onOpenFixture={() => { void openMoleculeFixture() }} />
     if (activeTab === 'failures') return <FailuresView failures={snapshot.failures} />
@@ -237,8 +240,9 @@ function App() {
     'evidence-search': '근거/논문 검색',
     recommendations: '실험 추천 큐',
     roles: '담당자/권한',
+    reasoning: '판단 해설',
   }
-  const opsTabs: TabId[] = ['analysis-request', 'agent-harness', 'evidence-search', 'recommendations', 'roles']
+  const opsTabs: TabId[] = ['analysis-request', 'agent-harness', 'evidence-search', 'recommendations', 'roles', 'reasoning']
   const isSystemView = activeTab === 'organization' || activeTab === 'skills' || opsTabs.includes(activeTab)
   const systemViewLabel = systemViewLabels[activeTab] ?? 'AI 조직도'
   const systemGroupLabel = opsTabs.includes(activeTab) ? 'AI·자동화 관리' : 'AI 운영'
@@ -273,6 +277,7 @@ function App() {
           <button aria-current={activeTab === 'evidence-search' ? 'page' : undefined} className={activeTab === 'evidence-search' ? 'is-active' : ''} type="button" onClick={() => { setActiveTab('evidence-search'); setIsSidebarOpen(false) }}><BookOpen size={17} /> 근거/논문 검색</button>
           <button aria-current={activeTab === 'recommendations' ? 'page' : undefined} className={activeTab === 'recommendations' ? 'is-active' : ''} type="button" onClick={() => { setActiveTab('recommendations'); setIsSidebarOpen(false) }}><FlaskConical size={17} /> 실험 추천 큐</button>
           <button aria-current={activeTab === 'roles' ? 'page' : undefined} className={activeTab === 'roles' ? 'is-active' : ''} type="button" onClick={() => { setActiveTab('roles'); setIsSidebarOpen(false) }}><Users size={17} /> 담당자/권한</button>
+          <button aria-current={activeTab === 'reasoning' ? 'page' : undefined} className={activeTab === 'reasoning' ? 'is-active' : ''} type="button" onClick={() => { setActiveTab('reasoning'); setIsSidebarOpen(false) }}><BrainCircuit size={17} /> 판단 해설</button>
         </nav>
 
         <div className="sidebar-section-heading"><span>최근 실행</span><span>{runs.length}</span></div>
