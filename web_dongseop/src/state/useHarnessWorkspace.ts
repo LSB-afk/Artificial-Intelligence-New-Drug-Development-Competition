@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { CreateRunInput, RunSnapshot, RunSummary } from '../domain/contracts'
+import type { CreateRunInput, ExplainInput, RunSnapshot, RunSummary } from '../domain/contracts'
 import { validateSnapshot } from '../domain/validateSnapshot'
 import { harnessClient } from '../services/harnessClient'
 
@@ -99,6 +99,12 @@ export function useHarnessWorkspace() {
     }
   }, [acceptSnapshot, selectedRunId])
 
+  // 해설은 스냅샷을 바꾸지 않습니다. 현재 실행을 근거로 문장만 만들어 돌려줍니다.
+  const explainTarget = useCallback(async (input: ExplainInput) => {
+    if (!snapshot) throw new Error('해설을 생성할 실행이 없습니다.')
+    return harnessClient.explainTarget(input, snapshot)
+  }, [snapshot])
+
   return {
     runs,
     snapshot,
@@ -109,5 +115,6 @@ export function useHarnessWorkspace() {
     createRun,
     cancelRun,
     markReviewed,
+    explainTarget,
   }
 }

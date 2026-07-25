@@ -1,12 +1,15 @@
 import { initialSnapshots } from '../data/demoScenarios'
 import type {
   CreateRunInput,
+  ExplainInput,
+  Explanation,
   HarnessClient,
   RunSnapshot,
   RunSummary,
   StageStatus,
 } from '../domain/contracts'
 import { validateSnapshot } from '../domain/validateSnapshot'
+import { requestExplanation } from './explainService'
 
 type SnapshotListener = (snapshot: RunSnapshot) => void
 
@@ -99,6 +102,14 @@ export class MockHarnessClient implements HarnessClient {
     snapshot.run.updatedAt = new Date().toISOString()
     this.emit(runId)
     return clone(snapshot)
+  }
+
+  /**
+   * 실행 데이터는 모의 어댑터가 만들지만, 해설은 실제 파이썬 하네스를 거칩니다.
+   * 하네스가 꺼져 있으면 스냅샷 기반 결정론적 문장으로 폴백합니다.
+   */
+  async explainTarget(input: ExplainInput, snapshot: RunSnapshot): Promise<Explanation> {
+    return requestExplanation(input, snapshot)
   }
 
   subscribe(runId: string, listener: SnapshotListener) {

@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, urlsplit
 from h2l import RULESET_VERSION
 from h2l.console_store import ConsoleError, HadesConsoleStore
 from h2l.eval_runner import load_cases, run_evaluation
+from h2l.llm import LLMConfig, explain_decision
 from h2l.registry import SnapshotRegistry
 from h2l.replay import ClinicalContradictionCritic, DrugDiscoveryHarness, SnapshotEvidenceAdapter
 
@@ -152,6 +153,35 @@ def _eval_view() -> dict:
     return run_evaluation(load_cases(DECISION_CASES))
 
 
+def _explain_view(hypothesis_id: str) -> dict:
+    """A bounded natural-language reading of an existing decision.
+
+    The decision itself is computed first and is unchanged by this route; the
+    local model only rephrases it, and the guardrail replaces any output that
+    would widen the claim. With ``H2L_LLM_ENABLED`` unset this is a pure
+    template render and performs no network I/O.
+    """
+    decision = _decide(hypothesis_id)
+    config = LLMConfig.from_env()
+    result = explain_decision(decision, config)
+    return {
+        "hypothesis_id": hypothesis_id,
+        "decision": decision["decision"],
+        "state": decision["state"],
+        "molecule_eligible": decision["molecule_eligible"],
+        "explanation": {
+            "text": result["text"],
+            "source": result["source"],
+            "model": result["model"],
+            "fallback_reason": result["fallback_reason"],
+            "violations": result["violations"],
+        },
+        "facts": result["facts"],
+        "audit": result["audit"],
+        "runtime": {"enabled": config.enabled, "model": config.model, "host": config.host},
+    }
+
+
 # ---- routing -----------------------------------------------------------
 def configure_console_store(path: str | os.PathLike) -> HadesConsoleStore:
     global _CONSOLE_STORE
@@ -207,6 +237,9 @@ def route(method: str, path: str, body=None) -> tuple[int, str, str]:
         return _ok(_events_view())
     if clean == "/api/eval":
         return _ok(_eval_view())
+    if clean == "/api/explain":
+        hypothesis = (query.get("hypothesis") or ["IBD:TYK2"])[0]
+        return _ok(_explain_view(hypothesis))
     if clean == "/api/demo":  # backward-compatible alias
         return _ok(_decide("IBD:TYK2"))
 

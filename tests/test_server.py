@@ -298,6 +298,38 @@ def test_eval_route_reports_candidate_ready():
     assert payload["baseline"]["readiness"] is False
 
 
+def test_explain_route_is_offline_and_template_backed_by_default(monkeypatch):
+    monkeypatch.delenv("H2L_LLM_ENABLED", raising=False)
+
+    status, _, payload = _json("/api/explain?hypothesis=IBD:TYK2")
+    assert status == 200
+    assert payload["decision"] == "REJECT"
+    assert payload["explanation"]["source"] == "template"
+    assert payload["runtime"]["enabled"] is False
+    assert payload["audit"]["event_type"] == "ModelCalled"
+
+
+def test_explain_route_states_the_rejection_and_the_block():
+    status, _, payload = _json("/api/explain?hypothesis=IBD:TYK2")
+    assert status == 200
+    assert payload["molecule_eligible"] is False
+    assert "진행할 수 없습니다" in payload["explanation"]["text"]
+    assert payload["facts"]["counts"]["contradicting"] == 2
+
+
+def test_explain_route_does_not_mutate_the_decision():
+    _json("/api/explain?hypothesis=IBD:TYK2")
+    status, _, payload = _json("/api/decision?hypothesis=IBD:TYK2")
+    assert status == 200
+    assert payload["decision"] == "REJECT"
+    assert payload["molecule_eligible"] is False
+
+
+def test_explain_route_rejects_mutation_methods():
+    status, _, _ = route("POST", "/api/explain")
+    assert status == 405
+
+
 def test_unknown_route_is_404():
     status, _, _ = route("GET", "/does-not-exist")
     assert status == 404
