@@ -1,13 +1,16 @@
-import { AlertTriangle, Bot, Cpu, FileText, PlayCircle, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, Bot, Cpu, FileText, FlaskConical, PlayCircle, ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import {
   OFFLINE_ACTIONS,
   listHypotheses,
   listModels,
+  listScenarios,
   runAgent,
+  runSandbox,
   type AgentAction,
   type AgentRun,
   type ModelCatalog,
+  type Scenario,
 } from '../services/agentService'
 
 /**
@@ -21,12 +24,20 @@ import {
  *
  * 게이트는 선택이 아니라 실행에서 막습니다. 거절된 타깃에 분자 최적화를
  * 제안하는 것은 허용되고, 하네스가 그것을 거부한 기록이 남습니다.
+ *
+ * 등록된 가설 두 건만 돌릴 수 있으면 "스스로 기각한다"는 주장을 밖에서 확인할
+ * 방법이 없으므로, 판정관이 직접 쓴 근거 패킷도 같은 루프에 넣을 수 있습니다.
+ * 그 패킷은 저장되지 않고 승인도 받지 않으며, 승인 기록이 없으니 판정이
+ * ADVANCE여도 분자 게이트는 닫힌 채로 남습니다.
  */
 export default function AgentHarnessView() {
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null)
   const [hypotheses, setHypotheses] = useState<string[]>([])
+  const [scenarios, setScenarios] = useState<Scenario[]>([])
   const [goal, setGoal] = useState('')
   const [model, setModel] = useState('')
+  const [preset, setPreset] = useState<Scenario | null>(null)
+  const [draft, setDraft] = useState('')
   const [run, setRun] = useState<AgentRun | null>(null)
   const [pending, setPending] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
@@ -34,28 +45,50 @@ export default function AgentHarnessView() {
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const [models, ids] = await Promise.all([listModels(), listHypotheses()])
+      const [models, ids, presets] = await Promise.all([listModels(), listHypotheses(), listScenarios()])
       if (cancelled) return
       setCatalog(models)
       setHypotheses(ids)
+      setScenarios(presets)
       setGoal((current) => current || ids[0] || '')
       setModel((current) => current || models.defaultModel || '')
     })()
     return () => { cancelled = true }
   }, [])
 
-  const handleRun = async () => {
-    if (!goal) return
+  const execute = async (task: () => Promise<AgentRun>) => {
     setPending(true)
     setFailure(null)
     try {
-      setRun(await runAgent(goal, model || null))
+      setRun(await task())
     } catch (cause) {
       setRun(null)
       setFailure(cause instanceof Error ? cause.message : '에이전트를 실행하지 못했습니다.')
     } finally {
       setPending(false)
     }
+  }
+
+  const handleRun = () => {
+    if (goal) void execute(() => runAgent(goal, model || null))
+  }
+
+  /** 붙여넣은 텍스트는 여기서 파싱합니다. 서버까지 보내고 400을 받는 것보다 빠릅니다. */
+  const handleSandboxRun = () => {
+    let packet: unknown
+    try {
+      packet = JSON.parse(draft)
+    } catch (cause) {
+      setRun(null)
+      setFailure(`JSON을 읽지 못했습니다: ${cause instanceof Error ? cause.message : '형식 오류'}`)
+      return
+    }
+    void execute(() => runSandbox(packet, model || null))
+  }
+
+  const applyPreset = (scenario: Scenario) => {
+    setPreset(scenario)
+    setDraft(JSON.stringify(scenario.packet, null, 2))
   }
 
   const actions: AgentAction[] = run?.actions ?? OFFLINE_ACTIONS
@@ -91,7 +124,7 @@ export default function AgentHarnessView() {
                   : '하네스 오프라인'}
               </small>
             </div>
-            <button className="secondary-button" type="button" disabled={pending || !goal} onClick={() => { void handleRun() }}>
+            <button className="secondary-button" type="button" disabled={pending || !goal} onClick={handleRun}>
               <PlayCircle size={15} /> {pending ? '실행 중' : run ? '다시 실행' : '에이전트 실행'}
             </button>
           </div>
@@ -120,6 +153,62 @@ export default function AgentHarnessView() {
           </div>
 
           {catalog && !catalog.reachable && <p className="ops-reason-note">{catalog.note}</p>}
+        </div>
+      </section>
+
+      <section className="ops-group">
+        <div className="ops-group-heading">
+          <strong>시나리오 직접 입력</strong>
+          <span>{scenarios.length} 프리셋</span>
+        </div>
+        <div className="ops-reason-card">
+          <div className="ops-reason-head">
+            <div className="ops-reason-title">
+              <strong>{preset ? preset.label : '근거 패킷'}</strong>
+              <small className="cell-sub">
+                {preset
+                  ? preset.note
+                  : '프리셋을 고르거나 근거 패킷 JSON을 직접 붙여넣으세요. 제출한 패킷은 저장되지 않고 승인도 받지 않습니다.'}
+              </small>
+            </div>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={pending || !draft.trim()}
+              onClick={handleSandboxRun}
+            >
+              <FlaskConical size={15} /> {pending ? '실행 중' : '이 패킷으로 실행'}
+            </button>
+          </div>
+
+          {scenarios.length > 0 && (
+            <div className="ops-reason-meta" role="group" aria-label="프리셋 시나리오">
+              {scenarios.map((scenario) => (
+                <button
+                  key={scenario.id}
+                  type="button"
+                  className="secondary-button"
+                  aria-pressed={preset?.id === scenario.id}
+                  disabled={pending}
+                  onClick={() => applyPreset(scenario)}
+                >
+                  {scenario.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <textarea
+            className="packet-input"
+            aria-label="근거 패킷 JSON"
+            spellCheck={false}
+            value={draft}
+            disabled={pending}
+            placeholder={'{\n  "hypothesis_id": "MY:TARGET",\n  "disease_id": "FIX:MY-DISEASE",\n  "indication_ids": ["FIX:MY-DISEASE"],\n  "target": "MY-TARGET",\n  "observed_at": "2026-07-25T00:00:00Z",\n  "records": []\n}'}
+            onChange={(event) => { setDraft(event.target.value); setPreset(null) }}
+          />
+
+          {preset && <p className="ops-reason-note">하네스가 계산할 판정: {preset.expectation}</p>}
         </div>
       </section>
 
@@ -173,13 +262,20 @@ export default function AgentHarnessView() {
           <div className="ops-reason-card">
             <p className="ops-reason-text">{run.explanation.text}</p>
             <div className="ops-reason-meta">
+              <span className="ops-source source-decision">{run.goal}</span>
               <span className="ops-source source-decision">판정 {run.decision.decision}</span>
               <span className="ops-source source-decision">상태 {run.decision.state}</span>
+              {run.sandbox && <span className="ops-source source-template">임시 패킷 · 미승인</span>}
               <span className="cell-muted">
                 분자 게이트 {run.decision.moleculeEligible ? '열림 (사람 승인 필요)' : '닫힘'}
               </span>
               {run.decision.ruleIds.length > 0 && <span className="cell-muted">규칙 {run.decision.ruleIds.join(', ')}</span>}
             </div>
+            {run.sandbox && (
+              <p className="ops-reason-note">
+                제출한 패킷으로 돌린 실행입니다. 저장되지 않았고 승인 기록이 없어 분자 최적화 단계로는 진행할 수 없습니다.
+              </p>
+            )}
             {run.explanation.violations.length > 0 && (
               <p className="ops-reason-guard">
                 <ShieldCheck size={13} /> 가드레일이 모델 문장을 차단해 템플릿으로 대체했습니다: {run.explanation.violations.join(', ')}

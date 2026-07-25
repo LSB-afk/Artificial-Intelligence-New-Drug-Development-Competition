@@ -166,6 +166,10 @@ try {
   const agentHarness = await desktop.evaluate(() => {
     const chip = document.querySelector('.ops-source select')
     const groups = [...document.querySelectorAll('.ops-group-heading strong')].map((node) => node.textContent)
+    const packetBox = document.querySelector('.packet-input')
+    const submit = [...document.querySelectorAll('button')].find((node) =>
+      node.textContent.includes('이 패킷으로 실행'),
+    )
     return {
       allowListRows: document.querySelectorAll('.data-table tbody tr').length,
       groups,
@@ -173,6 +177,16 @@ try {
       chipFontSize: chip ? parseFloat(getComputedStyle(chip).fontSize) : null,
       chipParentFontSize: chip ? parseFloat(getComputedStyle(chip.parentElement).fontSize) : null,
       chipBorder: chip ? getComputedStyle(chip).borderTopWidth : null,
+      hasPacketInput: Boolean(packetBox),
+      // 토큰 문자열과 계산된 fontFamily는 표기가 달라 직접 비교할 수 없습니다.
+      // 이미 --font-mono를 쓰는 요소와 맞춰봐야 실제 서체 일치를 봅니다.
+      packetFont: packetBox ? getComputedStyle(packetBox).fontFamily : null,
+      consoleMonoFont: getComputedStyle(document.querySelector('.topbar-left strong')).fontFamily,
+      packetOverflows: packetBox
+        ? packetBox.getBoundingClientRect().width > packetBox.parentElement.getBoundingClientRect().width + 1
+        : null,
+      presetButtons: document.querySelectorAll('[aria-label="프리셋 시나리오"] button').length,
+      submitDisabled: submit ? submit.disabled : null,
     }
   })
   assert(agentHarness.allowListRows === 7, `행동 허용 목록이 7개가 아닙니다: ${agentHarness.allowListRows}`)
@@ -182,6 +196,16 @@ try {
     `모델 선택기가 칩 타이포그래피에서 벗어났습니다: ${agentHarness.chipFontSize} / ${agentHarness.chipParentFontSize}`,
   )
   assert(agentHarness.chipBorder === '0px', `모델 선택기가 기본 브라우저 테두리를 그대로 씁니다: ${agentHarness.chipBorder}`)
+  // 직접 입력 칸은 서버 없이도 있어야 하고, 프리셋은 하네스가 내려주는 값이라
+  // 오프라인에서 버튼이 보이면 프런트가 시나리오를 지어낸 것입니다.
+  assert(agentHarness.hasPacketInput, '근거 패킷 입력 칸이 없습니다.')
+  assert(agentHarness.presetButtons === 0, `하네스가 꺼져 있는데 프리셋 ${agentHarness.presetButtons}개가 표시되었습니다.`)
+  assert(agentHarness.submitDisabled === true, '입력이 비었는데 패킷 실행 버튼이 활성화되어 있습니다.')
+  assert(
+    agentHarness.packetFont === agentHarness.consoleMonoFont,
+    `근거 패킷 입력 칸이 콘솔 고정폭 서체를 벗어났습니다: ${agentHarness.packetFont} / ${agentHarness.consoleMonoFont}`,
+  )
+  assert(!agentHarness.packetOverflows, '근거 패킷 입력 칸이 카드 폭을 넘어섭니다.')
   await desktop.screenshot({ path: artifactPath('desktop-agent-harness.png'), fullPage: true })
   checks.push(`agent harness offline allow-list ${JSON.stringify(agentHarness)}`)
   // 시스템 화면에서는 탭 바가 감춰지므로 사이드바로 모니터 화면에 돌아갑니다.

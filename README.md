@@ -59,7 +59,7 @@ PYTHONPATH=src python3 -m h2l.cli eval --cases evals/decision_cases.json --out a
 PYTHONPATH=src python3 -m h2l.server --host 127.0.0.1 --port 8765
 ```
 
-`python3 -m pytest`는 RDKit이 설치된 환경에서 221개, 없는 환경에서 199개 통과 + 1개 skip이다. 이 중 4개 real-socket HTTP 테스트는 실행 환경이 `127.0.0.1` 바인드를 허용해야 통과한다.
+`python3 -m pytest`는 RDKit이 설치된 환경에서 254개, 없는 환경에서 232개 통과 + 1개 skip이다. 이 중 4개 real-socket HTTP 테스트는 실행 환경이 `127.0.0.1` 바인드를 허용해야 통과한다.
 
 코어가 보장하는 4가지 이식 불변조건:
 
@@ -154,6 +154,34 @@ curl "http://127.0.0.1:8765/api/agent/run?hypothesis=IBD:TYK2&model=gemma4:lates
 ```
 
 `gemma4:latest`로 측정하면 6단계 전부를 모델이 고르고, 5~6번째에서 스스로 `optimize_molecules`를 제안해 하네스에 거부당한다. 콘솔의 **신약개발 Agent 하네스** 화면이 이 기록을 그대로 보여준다 — 단계마다 모델이 골랐는지 정책이 골랐는지, 어떤 단계가 거부됐는지까지.
+
+### 직접 쓴 근거로 확인하기
+
+등록된 가설 2건만 돌릴 수 있으면 "스스로 기각한다"는 주장을 밖에서 확인할 수 없다. `POST /api/agent/sandbox`는 제출한 근거 패킷으로 같은 루프를 돌린다.
+
+```bash
+curl -X POST http://127.0.0.1:8765/api/agent/sandbox \
+  -H 'Content-Type: application/json' \
+  -d '{"packet": {"hypothesis_id": "RA:JAK1", "disease_id": "MONDO_0008383",
+       "indication_ids": ["MONDO_0008383"], "target": "JAK1",
+       "observed_at": "2026-07-25T00:00:00Z",
+       "records": [{"evidence_id": "EV-JAK1-RA-PH3-FAIL", "kind": "trial",
+                    "indication": "rheumatoid arthritis", "indication_id": "MONDO_0008383",
+                    "outcome": "failed", "stance": "contradict"}]}}'
+```
+
+제출한 패킷은 **저장되지도 승인되지도 않는다.** 인메모리 어댑터가 요청 동안만 들고 있고 레지스트리는 건드리지 않는다. 승인 기록이 없으므로 판정이 ADVANCE여도 `molecule_eligible`은 false로 남는다 — 새 가드를 더한 게 아니라 기존 게이트가 이미 미승인 근거의 승격을 막기 때문이고, 그래서 임의 입력을 받아도 안전하다.
+
+`GET /api/scenarios`는 규칙을 하나씩 분리한 프리셋 4종을 내려준다. 콘솔의 "시나리오 직접 입력" 카드에서 버튼으로 넣거나 JSON을 직접 붙여넣을 수 있다.
+
+| 프리셋 | 판정 | 규칙 |
+|---|---|---|
+| 양성 근거 | ADVANCE | (없음) |
+| 실패 임상 | REJECT | `FAILED_TRIAL_BLOCKS_ADVANCE` |
+| 적응증 불일치 | HOLD | `INDICATION_MATCH_REQUIRED` + `REQUIRED_EVIDENCE_MISSING` |
+| 맥락 근거만 | HOLD | `REQUIRED_EVIDENCE_MISSING` |
+
+라벨과 실제 계산 결과가 어긋나지 않도록 테스트가 각 프리셋의 판정과 규칙을 대조한다. "맥락 근거만"은 결합력·유사도 같은 측정값이 임상 검증이 아니라는 규칙의 첫 데모다.
 
 ## 연구 콘솔 (web_dongseop)
 

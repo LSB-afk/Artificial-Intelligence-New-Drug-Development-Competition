@@ -28,6 +28,7 @@ from h2l.eval_runner import load_cases, run_evaluation
 from h2l.llm import LLMConfig, explain_decision, list_models, resolve_model
 from h2l.registry import SnapshotRegistry
 from h2l.replay import ClinicalContradictionCritic, DrugDiscoveryHarness, SnapshotEvidenceAdapter
+from h2l.scenarios import PacketRejected, sandbox_tools, scenario_catalog, validate_packet
 from h2l.workspace import run_snapshot
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -194,14 +195,15 @@ def _models_view() -> dict:
     }
 
 
-def _agent_view(hypothesis_id: str, model: str | None, max_steps: int) -> tuple[int, str, str]:
-    """Run the bounded action-selection loop and return its trace."""
+def _run_agent_view(
+    hypothesis_id: str, model: str | None, max_steps: int, tools: HarnessTools, *, sandbox: bool = False
+) -> tuple[int, str, str]:
+    """Run the bounded action-selection loop over whichever tools were bound."""
     config = LLMConfig.from_env()
     chosen, rejection = resolve_model(model, config)
     if rejection:
         return _json_response(400, {"error": "unknown_model", "message": rejection, "details": {"model": model}})
 
-    tools = HarnessTools(_hypotheses, _decide)
     try:
         trace = run_agent(hypothesis_id, tools, config.with_model(chosen), max_steps=max_steps)
     except ValueError as error:
@@ -209,7 +211,52 @@ def _agent_view(hypothesis_id: str, model: str | None, max_steps: int) -> tuple[
             404,
             {"error": "unknown_hypothesis", "message": str(error), "details": {"hypothesis": hypothesis_id}},
         )
-    return _ok({**trace, "actions": action_catalog()})
+    return _ok({**trace, "actions": action_catalog(), "sandbox": sandbox})
+
+
+def _agent_view(hypothesis_id: str, model: str | None, max_steps: int) -> tuple[int, str, str]:
+    """Run the loop over an approved snapshot from the registry."""
+    return _run_agent_view(hypothesis_id, model, max_steps, HarnessTools(_hypotheses, _decide))
+
+
+def _agent_sandbox_view(body) -> tuple[int, str, str]:
+    """Run the loop over a caller-supplied packet, storing none of it.
+
+    This is the only route that accepts scientific input, and it still does not
+    mutate scientific state: the packet is held in memory for the length of the
+    request and is never written, approved, or made visible to another request.
+    Because it is unapproved, the existing gate keeps ``molecule_eligible``
+    false even on ADVANCE, so an ad-hoc packet cannot reach molecule
+    optimization no matter what it contains.
+
+    The submitted packet does reach the explanation prompt, so a reviewer can
+    write text into it that steers the sentence. That is self-contained — the
+    run is not persisted and no other reviewer sees it — and the decision itself
+    is computed from the rules regardless of what the packet says in prose.
+    """
+    if not isinstance(body, dict):
+        return _json_response(
+            400, {"error": "invalid_body", "message": "요청 본문은 JSON 객체여야 합니다.", "details": {}}
+        )
+
+    model = body.get("model")
+    if model is not None and not isinstance(model, str):
+        return _json_response(
+            400, {"error": "invalid_body", "message": "'model'은 문자열이어야 합니다.", "details": {}}
+        )
+
+    try:
+        packet = validate_packet(body.get("packet"))
+    except PacketRejected as error:
+        return _json_response(400, {"error": "invalid_packet", "message": str(error), "details": {}})
+
+    return _run_agent_view(
+        packet["hypothesis_id"],
+        model,
+        _first_int([body.get("max_steps")], DEFAULT_MAX_STEPS),
+        sandbox_tools(packet),
+        sandbox=True,
+    )
 
 
 def _explain_view(hypothesis_id: str, model: str | None = None) -> tuple[int, str, str]:
@@ -283,6 +330,13 @@ def route(method: str, path: str, body=None) -> tuple[int, str, str]:
             return _method_not_allowed()
         return _serve_static(clean[len("/static/"):])
 
+    # The one scientific route that reads a request body. It computes over the
+    # submitted packet and writes nothing, so the read-only invariant holds.
+    if clean == "/api/agent/sandbox":
+        if method != "POST":
+            return _method_not_allowed()
+        return _agent_sandbox_view(body)
+
     if method != "GET":
         return _method_not_allowed()
 
@@ -306,6 +360,8 @@ def route(method: str, path: str, body=None) -> tuple[int, str, str]:
         return _explain_view(hypothesis, (query.get("model") or [None])[0])
     if clean == "/api/models":
         return _ok(_models_view())
+    if clean == "/api/scenarios":
+        return _ok({"scenarios": scenario_catalog()})
     if clean == "/api/agent/run":
         hypothesis = (query.get("hypothesis") or ["IBD:TYK2"])[0]
         model = (query.get("model") or [None])[0]

@@ -214,6 +214,35 @@ def test_compound_of_fact_set_words_is_not_a_fabricated_term(facts):
     assert [item for item in guard(text, facts) if item.startswith("unsupported_term")] == []
 
 
+def test_harness_vocabulary_may_be_written_in_its_noun_form(facts):
+    """The fact set stores ``stance: contradict``; prose says "contradiction".
+
+    Measured on the four preset packets: this derivation was the only thing
+    standing between a real model sentence and the template on the rejection
+    scenario, and it names no scientific entity.
+    """
+    text = (
+        "Crohn disease, ulcerative colitis, plaque psoriasis 근거 중 "
+        "contradiction 항목이 판정을 결정했습니다."
+    )
+    assert [item for item in guard(text, facts) if item.startswith("unsupported_term")] == []
+
+
+def test_allowing_harness_nouns_does_not_admit_a_fabricated_entity(facts):
+    """The check still has to catch the thing it was built for.
+
+    Widening ``ALLOWED_LATIN`` is only safe while an invented disease, drug, or
+    target is still refused, so that property is pinned next to the widening.
+    """
+    text = (
+        "Crohn disease, ulcerative colitis, plaque psoriasis 근거에 더해 "
+        "sarcoidosis 임상과 fictionib 계열이 확인되었습니다."
+    )
+    violations = [item for item in guard(text, facts) if item.startswith("unsupported_term")]
+    assert violations, "a fabricated indication and drug must still be caught"
+    assert "sarcoidosis" in violations[0] and "fictionib" in violations[0]
+
+
 def test_indication_translated_instead_of_quoted_is_rejected(facts):
     """The check that actually holds against a fabricated disease name."""
     violations = guard("크론병과 궤양성 대장염에서 임상이 실패했습니다.", facts)

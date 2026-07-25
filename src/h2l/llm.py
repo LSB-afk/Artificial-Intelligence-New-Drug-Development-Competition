@@ -107,9 +107,17 @@ DECISION_LABELS = {
 # Latin words the explanation may use without them appearing in the fact set:
 # decision vocabulary and the harness's own nouns. Everything else in Latin
 # script has to have come from the facts.
+#
+# The derived forms are here because the fact set stores the stem and the model
+# writes the noun: `stance` is "contradict", and a sentence that calls it a
+# "contradiction" has invented nothing. Only structural vocabulary belongs in
+# this set — never a disease, drug, or target name, which is what the check
+# exists to catch.
 ALLOWED_LATIN = {
     "advance", "hold", "reject", "insufficient", "review", "admet", "qed", "tanimoto",
     "ecfp", "rdkit", "smiles", "pains", "brenk", "id", "ids", "json", "api", "llm",
+    "contradiction", "contradictions", "contradicting", "contradictory",
+    "indications", "records", "rules", "outcomes", "trials",
 }
 MIN_LATIN_TOKEN = 3
 

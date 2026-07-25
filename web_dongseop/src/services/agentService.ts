@@ -50,9 +50,21 @@ export interface AgentRun {
   refusedSteps: number[]
   finished: boolean
   stoppedReason: string
+  /** 제출한 임시 패킷으로 돌린 실행인지. 저장되지 않고 승인도 받지 않은 근거입니다. */
+  sandbox: boolean
   decision: { decision: string; state: string; moleculeEligible: boolean; ruleIds: string[] }
   explanation: { text: string; source: 'model' | 'template'; model: string | null; violations: string[] }
   actions: AgentAction[]
+}
+
+/** 판정관이 버튼 하나로 넣어볼 수 있는 근거 패킷. 하나씩 다른 규칙을 건드립니다. */
+export interface Scenario {
+  id: string
+  label: string
+  /** 이 패킷이 어떤 판정과 규칙을 내는지. 하네스 테스트가 실제 출력과 대조합니다. */
+  expectation: string
+  note: string
+  packet: Record<string, unknown>
 }
 
 export interface ModelCatalog {
@@ -84,11 +96,11 @@ export const OFFLINE_CATALOG: ModelCatalog = {
   note: '하네스 서버에 연결할 수 없습니다. 행동 허용 목록만 표시합니다.',
 }
 
-async function getJson<T>(path: string, timeoutMs: number): Promise<T> {
+async function request<T>(path: string, timeoutMs: number, init?: RequestInit): Promise<T> {
   const controller = new AbortController()
   const timer = window.setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const response = await fetch(path, { signal: controller.signal })
+    const response = await fetch(path, { ...init, signal: controller.signal })
     if (!response.ok) {
       const detail = await response.json().catch(() => null)
       throw new Error(
@@ -102,6 +114,18 @@ async function getJson<T>(path: string, timeoutMs: number): Promise<T> {
   } finally {
     window.clearTimeout(timer)
   }
+}
+
+function getJson<T>(path: string, timeoutMs: number): Promise<T> {
+  return request<T>(path, timeoutMs)
+}
+
+function postJson<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, REQUEST_TIMEOUT_MS, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
 }
 
 interface ModelsResponse {
@@ -148,21 +172,13 @@ interface AgentRunResponse {
   refused_steps: number[]
   finished: boolean
   stopped_reason: string
+  sandbox?: boolean
   decision: { decision: string; state: string; molecule_eligible: boolean; rule_ids: string[] }
   explanation: { text: string; source: string; model: string | null; violations: string[] }
   actions: AgentAction[]
 }
 
-/**
- * 한 가설에 대해 에이전트 루프를 실행합니다.
- *
- * 실패를 삼키지 않습니다. 실행 기록은 "하네스가 이렇게 실행했다"는 주장이라
- * 서버가 없을 때 그럴듯한 대체본을 만들면 안 됩니다. 호출자가 오류를 표시합니다.
- */
-export async function runAgent(hypothesisId: string, model?: string | null): Promise<AgentRun> {
-  const query = new URLSearchParams({ hypothesis: hypothesisId })
-  if (model) query.set('model', model)
-  const payload = await getJson<AgentRunResponse>(`/api/agent/run?${query.toString()}`, REQUEST_TIMEOUT_MS)
+function toRun(payload: AgentRunResponse): AgentRun {
   return {
     goal: payload.goal,
     modelEnabled: payload.model_enabled,
@@ -181,6 +197,7 @@ export async function runAgent(hypothesisId: string, model?: string | null): Pro
     refusedSteps: payload.refused_steps ?? [],
     finished: payload.finished,
     stoppedReason: payload.stopped_reason,
+    sandbox: payload.sandbox ?? false,
     decision: {
       decision: payload.decision.decision,
       state: payload.decision.state,
@@ -194,6 +211,43 @@ export async function runAgent(hypothesisId: string, model?: string | null): Pro
       violations: payload.explanation.violations ?? [],
     },
     actions: payload.actions ?? OFFLINE_ACTIONS,
+  }
+}
+
+/**
+ * 등록된 가설 하나에 대해 에이전트 루프를 실행합니다.
+ *
+ * 실패를 삼키지 않습니다. 실행 기록은 "하네스가 이렇게 실행했다"는 주장이라
+ * 서버가 없을 때 그럴듯한 대체본을 만들면 안 됩니다. 호출자가 오류를 표시합니다.
+ */
+export async function runAgent(hypothesisId: string, model?: string | null): Promise<AgentRun> {
+  const query = new URLSearchParams({ hypothesis: hypothesisId })
+  if (model) query.set('model', model)
+  return toRun(await getJson<AgentRunResponse>(`/api/agent/run?${query.toString()}`, REQUEST_TIMEOUT_MS))
+}
+
+/**
+ * 제출한 근거 패킷으로 같은 루프를 돌립니다.
+ *
+ * 하네스는 이 패킷을 저장하지도 승인하지도 않습니다. 승인 기록이 없으니 판정이
+ * ADVANCE로 나와도 분자 게이트는 닫힌 채로 남습니다 — 입력창이 미검토 근거를
+ * 승인된 집합으로 밀어 넣는 통로가 되지 않는 이유입니다.
+ */
+export async function runSandbox(packet: unknown, model?: string | null): Promise<AgentRun> {
+  const response = await postJson<AgentRunResponse>('/api/agent/sandbox', { packet, model: model || null })
+  return toRun(response)
+}
+
+interface ScenarioResponse {
+  scenarios?: Scenario[]
+}
+
+/** 프리셋 시나리오. 하네스가 없으면 빈 목록이고, 화면은 버튼을 감춥니다. */
+export async function listScenarios(): Promise<Scenario[]> {
+  try {
+    return (await getJson<ScenarioResponse>('/api/scenarios', MODELS_TIMEOUT_MS)).scenarios ?? []
+  } catch {
+    return []
   }
 }
 
