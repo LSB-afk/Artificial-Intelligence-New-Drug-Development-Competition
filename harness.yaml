@@ -53,6 +53,7 @@ implementation:
     molopt: "src/h2l/molopt.py"
     molopt_eval: "src/h2l/molopt_eval.py"
     llm: "src/h2l/llm.py"
+    agent: "src/h2l/agent.py"
     chem: "src/h2l/chem.py"
     workspace: "src/h2l/workspace.py"
     console_store: "src/h2l/console_store.py"
@@ -155,6 +156,16 @@ decisions:
     decision: "Serve the web console's RunSnapshot from the decision core through read-only GET /api/workspace/runs, and keep the authored fixtures as a labelled offline fallback rather than deleting them."
     rationale: "The console rendered hand-authored TypeScript, so deleting the entire Python core would not have changed a pixel and no screen was evidence of the harness. The projection now derives run, stages, evidence, targets, failures, events, and artifacts from a real DrugDiscoveryHarness result and its approved packet: the TYK2 score reversal (100 -> 0) is three deductions that each name a rule and an evidence id, a pending snapshot still does not reach the screen, and both hypotheses show molecule stages blocked - REJECT by the gate and ADVANCE by human approval. Fields the packet does not carry (association score, tractability) are emitted as null/Unknown and rendered as absent instead of being filled with a placeholder number. The fixtures stay because the console must open without the harness and the molecule comparison screen has no computed equivalent yet; classification badges keep the two apart, and the connection chip goes green only when the harness actually answered."
 
+  - id: "D-012"
+    date: "2026-07-25"
+    decision: "Give the local model bounded action selection over a fixed allow-list, enforce the molecule gate at execution rather than at selection, and turn the model on by default on the serving plane only."
+    rationale: "The project rule says the LLM selects actions and writes bounded explanations, but only the explanation half existed: llm.py had one call site and nothing chose anything, so the system was a report generator. src/h2l/agent.py now lets the model pick which of seven allow-listed actions runs next; the harness executes it and writes every observation, so a proposal that carries its own result contributes only the action name. Validation refuses an unknown action, a hypothesis id the registry does not hold, and an action whose exact observation is already in the transcript - the repeat check is what stops a 7-8B model from burning the whole budget re-running one tool. Every failure (dead runtime, unparseable JSON, invented id) falls through to a deterministic policy and is recorded per step as selected_by plus the reason, so a reviewer can see how much of the run the model drove; with the model off the whole run is the policy and is byte-reproducible. The gate is deliberately not checked at selection: the agent may propose optimize_molecules on the REJECTED TYK2 target, and the harness refuses and records it. Measured on gemma4:latest the model drives 6 of 6 steps and reaches that refusal on its own. The serving default flipped to on because an absent Ollama costs one refused connection before the template answers, while the evaluation plane never enters this module and LLMConfig.offline() pins it off wherever output must stay reproducible."
+
+  - id: "D-013"
+    date: "2026-07-25"
+    decision: "Publish every count the harness can compute in the explanation fact set, and let a refused draft buy exactly one retry carrying the violation codes."
+    rationale: "With the model on by default the console still showed templates: across three installed models and three fixture decisions the guardrail refused all but two drafts, so 'the model writes the sentence' was false in practice. The cause was a fact set that published three counts, which forced a model wanting any other number to derive it and then be rejected as unsupported. Counts derived from the records are facts, so in_indication, cross_indication, by_outcome, and by_kind now ship with the rest. The retry sends only the violation codes, never the rejected draft, because feeding a draft back lets a fabrication survive by being edited. Two other findings came out of measuring rather than assuming: quoting the run's own computed decision was being read as a therapeutic claim (fixed by stripping the decision token the way rule ids already were, so ADVANCE written over a REJECT still trips), and appending the correction after the prompt's trailing cue made models transcribe the instruction into the explanation - which then satisfied the verbatim-indication check with the recitation. Corrections now live in the rule list, and a process_leak check refuses a transcript outright. Result on the fixture decisions: 9 of 9 drafts accepted, and gemma4:latest clears the guard on the first attempt every time, which is why it replaced qwen2.5:7b-instruct as the default."
+
 open_questions:
   - id: "Q-001"
     question: "Which alternative target will be the positive molecule-optimization branch after the same indication-aware evidence gate?"
@@ -162,7 +173,7 @@ open_questions:
   - id: "Q-002"
     status: "answered"
     question: "Which LLM/runtime and credit budget will be available in the final environment?"
-    answer: "Local Ollama (qwen2.5:7b-instruct by default) behind H2L_LLM_ENABLED, so there is no per-token cost and no network dependency. A hosted model can replace it through the same generator seam."
+    answer: "Local Ollama (gemma4:latest by default, on unless H2L_LLM_ENABLED=0), so there is no per-token cost and no network dependency. Any installed model can be selected per request through GET /api/models; a hosted model can replace the runtime through the same generator seam."
     owner: "Engineering lead"
   - id: "Q-003"
     question: "What exact licenses, API terms, snapshot retention, and redistribution rules apply to each external source?"

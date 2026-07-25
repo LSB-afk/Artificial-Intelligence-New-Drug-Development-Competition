@@ -22,9 +22,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from h2l import RULESET_VERSION
+from h2l.agent import DEFAULT_MAX_STEPS, HarnessTools, action_catalog, run_agent
 from h2l.console_store import ConsoleError, HadesConsoleStore
 from h2l.eval_runner import load_cases, run_evaluation
-from h2l.llm import LLMConfig, explain_decision
+from h2l.llm import LLMConfig, explain_decision, list_models, resolve_model
 from h2l.registry import SnapshotRegistry
 from h2l.replay import ClinicalContradictionCritic, DrugDiscoveryHarness, SnapshotEvidenceAdapter
 from h2l.workspace import run_snapshot
@@ -179,18 +180,55 @@ def _workspace_run_view(run_id: str) -> tuple[int, str, str]:
     return _json_response(404, {"error": "not_found", "message": f"Run not found: {run_id}", "details": {"run_id": run_id}})
 
 
-def _explain_view(hypothesis_id: str) -> dict:
+def _models_view() -> dict:
+    """What the console may offer in its model picker."""
+    config = LLMConfig.from_env()
+    installed = list_models(config)
+    return {
+        "enabled": config.enabled,
+        "host": config.host,
+        "default": config.model,
+        "installed": installed,
+        "reachable": bool(installed),
+        "note": "모델이 없거나 꺼져 있으면 결정론적 템플릿과 고정 정책으로 동작합니다.",
+    }
+
+
+def _agent_view(hypothesis_id: str, model: str | None, max_steps: int) -> tuple[int, str, str]:
+    """Run the bounded action-selection loop and return its trace."""
+    config = LLMConfig.from_env()
+    chosen, rejection = resolve_model(model, config)
+    if rejection:
+        return _json_response(400, {"error": "unknown_model", "message": rejection, "details": {"model": model}})
+
+    tools = HarnessTools(_hypotheses, _decide)
+    try:
+        trace = run_agent(hypothesis_id, tools, config.with_model(chosen), max_steps=max_steps)
+    except ValueError as error:
+        return _json_response(
+            404,
+            {"error": "unknown_hypothesis", "message": str(error), "details": {"hypothesis": hypothesis_id}},
+        )
+    return _ok({**trace, "actions": action_catalog()})
+
+
+def _explain_view(hypothesis_id: str, model: str | None = None) -> tuple[int, str, str]:
     """A bounded natural-language reading of an existing decision.
 
     The decision itself is computed first and is unchanged by this route; the
     local model only rephrases it, and the guardrail replaces any output that
-    would widen the claim. With ``H2L_LLM_ENABLED`` unset this is a pure
-    template render and performs no network I/O.
+    would widen the claim. With ``H2L_LLM_ENABLED=0`` this is a pure template
+    render and performs no network I/O.
     """
-    decision = _decide(hypothesis_id)
     config = LLMConfig.from_env()
-    result = explain_decision(decision, config)
-    return {
+    chosen, rejection = resolve_model(model, config)
+    if rejection:
+        return _json_response(400, {"error": "unknown_model", "message": rejection, "details": {"model": model}})
+
+    decision = _decide(hypothesis_id)
+    settings = config.with_model(chosen)
+    result = explain_decision(decision, settings)
+    return _ok({
         "hypothesis_id": hypothesis_id,
         "decision": decision["decision"],
         "state": decision["state"],
@@ -204,8 +242,8 @@ def _explain_view(hypothesis_id: str) -> dict:
         },
         "facts": result["facts"],
         "audit": result["audit"],
-        "runtime": {"enabled": config.enabled, "model": config.model, "host": config.host},
-    }
+        "runtime": {"enabled": settings.enabled, "model": settings.model, "host": settings.host},
+    })
 
 
 # ---- routing -----------------------------------------------------------
@@ -265,7 +303,14 @@ def route(method: str, path: str, body=None) -> tuple[int, str, str]:
         return _ok(_eval_view())
     if clean == "/api/explain":
         hypothesis = (query.get("hypothesis") or ["IBD:TYK2"])[0]
-        return _ok(_explain_view(hypothesis))
+        return _explain_view(hypothesis, (query.get("model") or [None])[0])
+    if clean == "/api/models":
+        return _ok(_models_view())
+    if clean == "/api/agent/run":
+        hypothesis = (query.get("hypothesis") or ["IBD:TYK2"])[0]
+        model = (query.get("model") or [None])[0]
+        steps = int(_first_int(query.get("max_steps"), DEFAULT_MAX_STEPS))
+        return _agent_view(hypothesis, model, steps)
     if clean == "/api/workspace/runs":
         return _ok(_workspace_runs_view())
     if clean.startswith("/api/workspace/runs/"):
@@ -406,6 +451,14 @@ def _expected_statuses(payload: dict) -> list[str]:
             {"field": "expected_statuses"},
         )
     return statuses
+
+
+def _first_int(values, default: int) -> int:
+    """Bound a caller-supplied step budget: an agent loop must stay finite."""
+    try:
+        return max(1, min(12, int((values or [default])[0])))
+    except (TypeError, ValueError):
+        return default
 
 
 def _ok(payload: dict) -> tuple[int, str, str]:

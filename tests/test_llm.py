@@ -1,18 +1,25 @@
-"""Local-model explanation layer: offline default, fact-bounded output.
+"""Local-model explanation layer: fact-bounded output, template fallback.
 
 The model is allowed to rephrase decisions, never to widen them. These tests
-pin the two properties that make that safe: the harness stays fully offline and
-deterministic unless explicitly enabled, and any model output that introduces
-facts, flips the decision, or leaks reasoning is replaced by the template.
+pin the two properties that make that safe: any output that introduces facts,
+flips the decision, or leaks reasoning is replaced by the template, and a path
+pinned offline stays offline no matter what the environment says.
+
+The model runs by default on the serving plane, so these tests always pass an
+explicit config — a suite whose result depends on whether Ollama happens to be
+installed is not a regression test.
 """
 import json
 
 import pytest
 
 from h2l.llm import (
+    MAX_ATTEMPTS,
     MODEL_CALL_EVENT,
+    VIOLATION_GUIDANCE,
     LLMConfig,
     build_prompt,
+    build_repair_prompt,
     explain_decision,
     explanation_facts,
     guard,
@@ -72,23 +79,31 @@ def _boom(prompt, config):
 
 
 # ---- offline invariant -------------------------------------------------
-def test_disabled_by_default_and_never_calls_the_model():
-    result = explain_decision(REJECT_DECISION, LLMConfig(), generator=_boom)
+def test_offline_config_never_calls_the_model():
+    result = explain_decision(REJECT_DECISION, LLMConfig.offline(), generator=_boom)
     assert result["source"] == "template"
     assert result["audit"]["outcome"] == "disabled"
     assert result["audit"]["prompt_hash"] is None
 
 
-def test_env_config_is_off_unless_explicitly_enabled():
-    assert LLMConfig.from_env({}).enabled is False
-    assert LLMConfig.from_env({"H2L_LLM_ENABLED": "0"}).enabled is False
+def test_offline_config_cannot_be_re_enabled_by_the_environment():
+    """A pinned-off path stays off even where the serving default is on."""
+    assert LLMConfig.offline().enabled is False
+    assert LLMConfig.offline(model="llama3.1:8b").model == "llama3.1:8b"
+    assert LLMConfig.offline(model="llama3.1:8b").enabled is False
+
+
+def test_env_config_is_on_unless_explicitly_disabled():
+    assert LLMConfig.from_env({}).enabled is True
     assert LLMConfig.from_env({"H2L_LLM_ENABLED": "1"}).enabled is True
     assert LLMConfig.from_env({"H2L_LLM_ENABLED": "true"}).enabled is True
+    assert LLMConfig.from_env({"H2L_LLM_ENABLED": "0"}).enabled is False
+    assert LLMConfig.from_env({"H2L_LLM_ENABLED": "off"}).enabled is False
 
 
 def test_template_is_deterministic():
-    first = explain_decision(REJECT_DECISION, LLMConfig(), generator=_boom)["text"]
-    second = explain_decision(REJECT_DECISION, LLMConfig(), generator=_boom)["text"]
+    first = explain_decision(REJECT_DECISION, LLMConfig.offline(), generator=_boom)["text"]
+    second = explain_decision(REJECT_DECISION, LLMConfig.offline(), generator=_boom)["text"]
     assert first == second
 
 
@@ -106,8 +121,24 @@ def test_unreachable_runtime_falls_back_without_raising(facts):
 def test_facts_carry_only_computed_decision_content(facts):
     assert facts["decision"] == "REJECT"
     assert facts["molecule_eligible"] is False
-    assert facts["counts"] == {"evidence": 3, "contradicting": 2, "supporting": 0}
     assert facts["evidence_ids"] == REJECT_DECISION["evidence_ids"]
+
+
+def test_counts_publish_every_tally_the_harness_can_compute(facts):
+    """A count the model needs but cannot see is a count it will invent.
+
+    Every number here is derived from the records, so publishing them widens
+    what the model may say without widening what is true.
+    """
+    assert facts["counts"] == {
+        "evidence": 3,
+        "contradicting": 2,
+        "supporting": 0,
+        "in_indication": 0,
+        "cross_indication": 3,
+        "by_outcome": {"failed": 2, "positive": 1},
+        "by_kind": {"trial": 2, "approval": 1},
+    }
 
 
 def test_prompt_contains_the_fact_set_and_no_free_text(facts):
@@ -140,12 +171,53 @@ def test_therapeutic_claim_on_a_rejection_is_blocked(facts):
     assert any(item.startswith("therapeutic_claim") for item in violations)
 
 
+def _claims(text: str, facts: dict) -> list[str]:
+    """Only the therapeutic-claim verdict, so unrelated rules cannot mask it."""
+    return [item for item in guard(text, facts) if item.startswith("therapeutic_claim")]
+
+
 def test_rule_id_containing_advance_is_not_read_as_a_claim(facts):
-    assert guard("적용 규칙은 FAILED_TRIAL_BLOCKS_ADVANCE 입니다.", facts) == []
+    assert _claims("적용 규칙은 FAILED_TRIAL_BLOCKS_ADVANCE 입니다.", facts) == []
 
 
 def test_negated_disclaimer_is_not_a_claim(facts):
-    assert guard("이 설명은 치료 효과를 주장하지 않습니다.", facts) == []
+    assert _claims("이 설명은 치료 효과를 주장하지 않습니다.", facts) == []
+
+
+def test_quoting_the_computed_decision_is_not_a_claim():
+    """Reporting an ADVANCE the harness computed is not asserting a therapy."""
+    advance = {**REJECT_DECISION, "decision": "ADVANCE", "state": "AWAITING_APPROVAL"}
+    assert _claims("결정은 ADVANCE이며 승인 대기 상태입니다.", explanation_facts(advance)) == []
+
+
+def test_advance_written_over_a_rejection_is_still_a_claim(facts):
+    """The exemption is for the decision this run produced, not the word."""
+    assert _claims("이 가설은 ADVANCE 상태로 판정되었습니다.", facts) != []
+
+
+def test_instruction_transcript_is_rejected(facts):
+    """A draft that recites the guard's own feedback is not an explanation.
+
+    It also satisfies the verbatim-indication rule with the recitation, so
+    without this check a retry can pass while explaining nothing.
+    """
+    recited = "직전 답변이 거절되어 다시 쓰겠습니다. Crohn disease, ulcerative colitis, plaque psoriasis."
+    assert "process_leak" in guard(recited, facts)
+
+
+def test_compound_of_fact_set_words_is_not_a_fabricated_term(facts):
+    """``cross_indication`` in the facts licenses "cross-indication" in prose."""
+    text = (
+        "Crohn disease, ulcerative colitis, plaque psoriasis 근거는 "
+        "cross-indication 관계이므로 판정이 유지됩니다."
+    )
+    assert [item for item in guard(text, facts) if item.startswith("unsupported_term")] == []
+
+
+def test_indication_translated_instead_of_quoted_is_rejected(facts):
+    """The check that actually holds against a fabricated disease name."""
+    violations = guard("크론병과 궤양성 대장염에서 임상이 실패했습니다.", facts)
+    assert any(item.startswith("indication_not_quoted") for item in violations)
 
 
 def test_reasoning_leak_is_rejected(facts):
@@ -169,8 +241,14 @@ def test_empty_output_is_rejected(facts):
 
 
 # ---- model path --------------------------------------------------------
+CLEAN_OUTPUT = (
+    "TYK2 가설은 Crohn disease, ulcerative colitis, plaque psoriasis 범위에서 "
+    "진행이 거절되었습니다. 반증 근거가 우세합니다."
+)
+
+
 def test_clean_model_output_is_used_and_audited(facts):
-    clean = "TYK2 가설은 해당 적응증에서 진행이 거절되었습니다. 반증 근거가 우세합니다."
+    clean = CLEAN_OUTPUT
 
     result = explain_decision(REJECT_DECISION, LLMConfig(enabled=True), generator=lambda p, c: clean)
     assert result["source"] == "model"
@@ -199,9 +277,49 @@ def test_audit_records_the_prompt_hash_but_never_the_prompt():
 
 
 def test_model_scratchpad_is_stripped_before_the_guardrail_runs():
-    raw = "<think>숨은 추론 과정</think>TYK2 가설은 거절되었습니다."
+    raw = f"<think>숨은 추론 과정</think>{CLEAN_OUTPUT}"
 
     result = explain_decision(REJECT_DECISION, LLMConfig(enabled=True), generator=lambda p, c: raw)
     assert result["source"] == "model"
     assert "숨은 추론" not in result["text"]
     assert "<think>" not in result["text"]
+
+
+# ---- bounded retry -----------------------------------------------------
+def test_a_refused_draft_buys_one_more_attempt():
+    """The guard still decides; the model gets told which rule it broke."""
+    drafts = iter(["87% 반응률이 확인되었습니다.", CLEAN_OUTPUT])
+    prompts: list[str] = []
+
+    def record(prompt, config):
+        prompts.append(prompt)
+        return next(drafts)
+
+    result = explain_decision(REJECT_DECISION, LLMConfig(enabled=True), generator=record)
+    assert result["source"] == "model"
+    assert result["audit"]["attempts"] == 2
+    assert result["violations"] == []
+    assert prompts[0] != prompts[1]
+
+
+def test_the_retry_prompt_names_the_broken_rule_not_the_rejected_text(facts):
+    """Feeding the draft back would let a fabrication survive by being edited."""
+    hallucination = "천식에 효과가 있습니다."
+    repair = build_repair_prompt(facts, guard(hallucination, facts))
+    assert "천식" not in repair
+    assert VIOLATION_GUIDANCE["indication_not_quoted"] in repair
+    assert repair.count("설명:") == 1
+
+
+def test_a_run_that_never_satisfies_the_guard_ends_on_the_template(facts):
+    calls = []
+
+    def always_bad(prompt, config):
+        calls.append(prompt)
+        return "NCT01234567에서 87% 반응률을 보였습니다."
+
+    result = explain_decision(REJECT_DECISION, LLMConfig(enabled=True), generator=always_bad)
+    assert result["source"] == "template"
+    assert result["text"] == render_template(facts)
+    assert result["audit"]["outcome"] == "rejected"
+    assert len(calls) == MAX_ATTEMPTS

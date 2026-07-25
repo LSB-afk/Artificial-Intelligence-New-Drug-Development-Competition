@@ -157,6 +157,37 @@ try {
   await desktop.screenshot({ path: artifactPath('desktop-report.png'), fullPage: true })
   checks.push('synthetic report disclosure and typography unity')
 
+  // 하네스가 꺼져 있어도 행동 허용 목록은 참이라 화면이 비지 않아야 합니다.
+  // 실행 기록은 서버가 있어야만 생기므로, 여기서 기록이 보이면 오프라인 폴백이
+  // 사실을 지어낸 것입니다.
+  await desktop.getByRole('button', { name: /신약개발 Agent 하네스/ }).click()
+  await desktop.getByRole('heading', { name: '신약개발 Agent 하네스' }).waitFor()
+  await desktop.getByText('실행 기록이 없습니다.').waitFor({ timeout: 10000 })
+  const agentHarness = await desktop.evaluate(() => {
+    const chip = document.querySelector('.ops-source select')
+    const groups = [...document.querySelectorAll('.ops-group-heading strong')].map((node) => node.textContent)
+    return {
+      allowListRows: document.querySelectorAll('.data-table tbody tr').length,
+      groups,
+      hasRunRecord: groups.includes('실행 기록'),
+      chipFontSize: chip ? parseFloat(getComputedStyle(chip).fontSize) : null,
+      chipParentFontSize: chip ? parseFloat(getComputedStyle(chip.parentElement).fontSize) : null,
+      chipBorder: chip ? getComputedStyle(chip).borderTopWidth : null,
+    }
+  })
+  assert(agentHarness.allowListRows === 7, `행동 허용 목록이 7개가 아닙니다: ${agentHarness.allowListRows}`)
+  assert(!agentHarness.hasRunRecord, '하네스가 꺼져 있는데 실행 기록이 표시되었습니다.')
+  assert(
+    agentHarness.chipFontSize === agentHarness.chipParentFontSize,
+    `모델 선택기가 칩 타이포그래피에서 벗어났습니다: ${agentHarness.chipFontSize} / ${agentHarness.chipParentFontSize}`,
+  )
+  assert(agentHarness.chipBorder === '0px', `모델 선택기가 기본 브라우저 테두리를 그대로 씁니다: ${agentHarness.chipBorder}`)
+  await desktop.screenshot({ path: artifactPath('desktop-agent-harness.png'), fullPage: true })
+  checks.push(`agent harness offline allow-list ${JSON.stringify(agentHarness)}`)
+  // 시스템 화면에서는 탭 바가 감춰지므로 사이드바로 모니터 화면에 돌아갑니다.
+  await desktop.getByRole('button', { name: /실행 모니터/ }).click()
+  await desktop.getByRole('tab', { name: /개요/ }).click()
+
   await desktop.getByRole('button', { name: '새 실행', exact: true }).first().click()
   const dialog = desktop.getByRole('dialog', { name: '새 실행 시작' })
   await dialog.getByRole('button', { name: /IBD 근거 검토/ }).click()

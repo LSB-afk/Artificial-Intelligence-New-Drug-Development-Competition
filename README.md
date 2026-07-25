@@ -59,7 +59,7 @@ PYTHONPATH=src python3 -m h2l.cli eval --cases evals/decision_cases.json --out a
 PYTHONPATH=src python3 -m h2l.server --host 127.0.0.1 --port 8765
 ```
 
-`python3 -m pytest`는 RDKit이 설치된 환경에서 186개, 없는 환경에서 164개 통과 + 1개 skip이다. 이 중 4개 real-socket HTTP 테스트는 실행 환경이 `127.0.0.1` 바인드를 허용해야 통과한다.
+`python3 -m pytest`는 RDKit이 설치된 환경에서 221개, 없는 환경에서 199개 통과 + 1개 skip이다. 이 중 4개 real-socket HTTP 테스트는 실행 환경이 `127.0.0.1` 바인드를 허용해야 통과한다.
 
 코어가 보장하는 4가지 이식 불변조건:
 
@@ -113,27 +113,47 @@ paired bootstrap Δ = 0.429, 95% CI [0.214, 0.714] (0을 포함하지 않음).
 - 판정을 뒤집는 서술, `ADVANCE`가 아닌데 치료 효과·유효성을 주장하는 문장
 - 사고 과정(chain-of-thought) 노출, 길이 초과, 언어 불일치
 
-하나라도 걸리면 모델 문장을 **고치지 않고 버리고** 결정론적 템플릿으로 대체한다. 감사 레코드(`ModelCalled`)에는 프롬프트 해시만 남기고 프롬프트 본문과 추론 과정은 저장하지 않는다.
+하나라도 걸리면 모델 문장을 **고치지 않고 버리고** 결정론적 템플릿으로 대체한다. 거절된 초안은 위반 코드만 프롬프트에 얹어 **한 번** 다시 쓰게 하고, 그래도 통과하지 못하면 템플릿이 남는다. 초안 본문은 되돌려주지 않는다 — 초안을 고쳐 쓰게 하면 지어낸 내용이 편집만 거쳐 살아남기 때문이다. 감사 레코드(`ModelCalled`)에는 프롬프트 해시와 시도 횟수만 남기고 프롬프트 본문과 추론 과정은 저장하지 않는다.
 
-기본값은 OFF이며, 이 상태에서는 네트워크 I/O가 전혀 없고 평가는 그대로 재현 가능하다.
+기본값은 ON이다. Ollama가 없어도 연결이 즉시 거절되고 템플릿이 답하므로 비용이 없다. 평가 계층은 이 모듈을 아예 지나지 않으며, 출력이 재현 가능해야 하는 경로는 환경변수와 무관하게 `LLMConfig.offline()`으로 고정한다.
 
 ```bash
-# 템플릿만 사용 (기본값, 완전 오프라인)
-curl "http://127.0.0.1:8765/api/explain?hypothesis=IBD:TYK2"
+# 설치된 모델 목록 (콘솔 모델 선택기가 쓰는 것과 같은 값)
+curl "http://127.0.0.1:8765/api/models"
 
-# 로컬 Ollama 사용
-H2L_LLM_ENABLED=1 H2L_LLM_MODEL=qwen2.5:7b-instruct \
-PYTHONPATH=src python3 -m h2l.server --host 127.0.0.1 --port 8765
+# 모델을 지정해 해설 생성
+curl "http://127.0.0.1:8765/api/explain?hypothesis=IBD:TYK2&model=gemma4:latest"
+
+# 템플릿만 사용 (완전 오프라인)
+H2L_LLM_ENABLED=0 PYTHONPATH=src python3 -m h2l.server --host 127.0.0.1 --port 8765
 ```
 
 | 환경변수 | 기본값 | 설명 |
 |---|---|---|
-| `H2L_LLM_ENABLED` | `0` | 로컬 모델 호출 여부. 끄면 템플릿만 쓴다. |
+| `H2L_LLM_ENABLED` | `1` | 로컬 모델 호출 여부. `0`이면 템플릿만 쓴다. |
 | `H2L_LLM_HOST` | `http://127.0.0.1:11434` | Ollama 주소 |
-| `H2L_LLM_MODEL` | `qwen2.5:7b-instruct` | 모델 이름 |
+| `H2L_LLM_MODEL` | `gemma4:latest` | 기본 모델. 요청마다 `model=`로 바꿀 수 있다. |
 | `H2L_LLM_TIMEOUT_S` | `20` | 응답 대기 한도. 초과하면 템플릿으로 폴백한다. |
 
+설치된 세 모델(`gemma4:latest`, `llama3.1:8b`, `qwen2.5:7b-instruct`)로 세 개의 고정 판단을 측정한 결과 9/9가 가드레일을 통과했고, `gemma4:latest`만 매번 1회 시도로 통과해 기본값이 되었다. 설치되지 않은 모델을 요청하면 400으로 거절한다 — 콘솔이 문장 옆에 모델 이름을 붙이므로 그 라벨은 사실이어야 한다.
+
 Ollama가 꺼져 있거나 응답이 늦어도 `/api/explain`은 200과 템플릿 문장을 돌려준다. 콘솔은 출처 칩으로 `로컬 모델`과 `결정론적 템플릿`을 구분해 보여준다.
+
+## 에이전트 루프 (모델이 고르고, 하네스가 실행한다)
+
+`src/h2l/agent.py`는 프로젝트 규칙의 나머지 절반이다. 모델의 권한은 **다음에 어떤 행동을 실행할지 고르는 것 하나뿐**이고, 결과·숫자·근거 ID·판정은 전부 결정론적 코드가 쓴다. 자기 결과를 함께 실어 보낸 제안이 있어도 행동 이름만 취한다.
+
+허용 목록은 7개다: `list_hypotheses`, `inspect_evidence`, `critique`, `check_molecule_gate`, `optimize_molecules`, `whatif_missing_evidence`, `finish`.
+
+검증이 거절하는 것: 목록에 없는 행동, 레지스트리에 없는 가설 ID, 이미 관측한 행동의 반복. 어떤 실패든(런타임 다운, JSON 파싱 실패, 지어낸 ID) 그 단계는 고정 정책으로 넘어가고 `selected_by`와 이유가 기록된다. 모델을 끄면 실행 전체가 정책이 되어 바이트 재현이 가능하다.
+
+**게이트는 선택이 아니라 실행에서 막는다.** 에이전트는 거절된 타깃에 분자 최적화를 제안할 수 있고, 하네스가 그것을 거부한 기록을 남긴다. 계획은 틀려도 되지만 실행은 안 된다.
+
+```bash
+curl "http://127.0.0.1:8765/api/agent/run?hypothesis=IBD:TYK2&model=gemma4:latest"
+```
+
+`gemma4:latest`로 측정하면 6단계 전부를 모델이 고르고, 5~6번째에서 스스로 `optimize_molecules`를 제안해 하네스에 거부당한다. 콘솔의 **신약개발 Agent 하네스** 화면이 이 기록을 그대로 보여준다 — 단계마다 모델이 골랐는지 정책이 골랐는지, 어떤 단계가 거부됐는지까지.
 
 ## 연구 콘솔 (web_dongseop)
 

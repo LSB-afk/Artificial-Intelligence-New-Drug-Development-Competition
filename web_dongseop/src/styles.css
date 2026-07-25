@@ -3418,6 +3418,19 @@ body { font-size: 15px; }
 .ops-source.source-template { color: var(--ink-soft); background: var(--surface-muted); }
 .ops-source.source-decision { color: var(--ink-soft); background: var(--surface-muted); }
 
+/* A picker living inside a chip. Default select chrome is taller and larger
+   than the 11px chip, so it inherits type and drops its border instead. */
+.ops-source select {
+  padding: 0;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ops-source select:disabled { cursor: default; opacity: 0.6; }
+
 .ops-reason-guard {
   display: flex;
   align-items: flex-start;

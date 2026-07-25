@@ -298,8 +298,8 @@ def test_eval_route_reports_candidate_ready():
     assert payload["baseline"]["readiness"] is False
 
 
-def test_explain_route_is_offline_and_template_backed_by_default(monkeypatch):
-    monkeypatch.delenv("H2L_LLM_ENABLED", raising=False)
+def test_explain_route_falls_back_to_the_template_when_the_model_is_off(monkeypatch):
+    monkeypatch.setenv("H2L_LLM_ENABLED", "0")
 
     status, _, payload = _json("/api/explain?hypothesis=IBD:TYK2")
     assert status == 200
@@ -307,14 +307,24 @@ def test_explain_route_is_offline_and_template_backed_by_default(monkeypatch):
     assert payload["explanation"]["source"] == "template"
     assert payload["runtime"]["enabled"] is False
     assert payload["audit"]["event_type"] == "ModelCalled"
-
-
-def test_explain_route_states_the_rejection_and_the_block():
-    status, _, payload = _json("/api/explain?hypothesis=IBD:TYK2")
-    assert status == 200
-    assert payload["molecule_eligible"] is False
     assert "진행할 수 없습니다" in payload["explanation"]["text"]
-    assert payload["facts"]["counts"]["contradicting"] == 2
+
+
+def test_explain_route_reports_the_same_facts_whoever_wrote_the_sentence(monkeypatch):
+    """The claim belongs to the harness, not to the writer.
+
+    Asserted for both modes so the suite does not depend on whether Ollama
+    happens to be installed on the machine running it.
+    """
+    for enabled in ("0", "1"):
+        monkeypatch.setenv("H2L_LLM_ENABLED", enabled)
+        status, _, payload = _json("/api/explain?hypothesis=IBD:TYK2")
+        assert status == 200
+        assert payload["decision"] == "REJECT"
+        assert payload["molecule_eligible"] is False
+        assert payload["facts"]["counts"]["contradicting"] == 2
+        assert payload["explanation"]["source"] in {"model", "template"}
+        assert payload["explanation"]["text"].strip()
 
 
 def test_explain_route_does_not_mutate_the_decision():
