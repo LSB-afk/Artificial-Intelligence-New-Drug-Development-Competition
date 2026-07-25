@@ -19,7 +19,7 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from h2l import RULESET_VERSION
 from h2l.console_store import ConsoleError, HadesConsoleStore
@@ -27,6 +27,7 @@ from h2l.eval_runner import load_cases, run_evaluation
 from h2l.llm import LLMConfig, explain_decision
 from h2l.registry import SnapshotRegistry
 from h2l.replay import ClinicalContradictionCritic, DrugDiscoveryHarness, SnapshotEvidenceAdapter
+from h2l.workspace import run_snapshot
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 STATIC_DIR = BASE_DIR / "static"
@@ -153,6 +154,31 @@ def _eval_view() -> dict:
     return run_evaluation(load_cases(DECISION_CASES))
 
 
+def _workspace_snapshots() -> list[dict]:
+    """Every current hypothesis rendered as a console RunSnapshot.
+
+    Read-only and deterministic: the projection reuses ``_decide`` and the
+    packet's ``observed_at``, so repeated requests are byte-identical.
+    """
+    snapshots = [run_snapshot(_decide(item["hypothesis_id"])) for item in _hypotheses()]
+    # Runs that stopped something come first: a blocked hypothesis is what the
+    # console exists to surface. Ties break on hypothesis id, so the order is
+    # deterministic.
+    return sorted(snapshots, key=lambda s: (s["targets"][0]["decision"] == "review", s["run"]["id"]))
+
+
+def _workspace_runs_view() -> dict:
+    return {"runs": [snapshot["run"] for snapshot in _workspace_snapshots()]}
+
+
+def _workspace_run_view(run_id: str) -> tuple[int, str, str]:
+    for item in _hypotheses():
+        snapshot = run_snapshot(_decide(item["hypothesis_id"]))
+        if snapshot["run"]["id"] == run_id:
+            return _ok(snapshot)
+    return _json_response(404, {"error": "not_found", "message": f"Run not found: {run_id}", "details": {"run_id": run_id}})
+
+
 def _explain_view(hypothesis_id: str) -> dict:
     """A bounded natural-language reading of an existing decision.
 
@@ -240,6 +266,10 @@ def route(method: str, path: str, body=None) -> tuple[int, str, str]:
     if clean == "/api/explain":
         hypothesis = (query.get("hypothesis") or ["IBD:TYK2"])[0]
         return _ok(_explain_view(hypothesis))
+    if clean == "/api/workspace/runs":
+        return _ok(_workspace_runs_view())
+    if clean.startswith("/api/workspace/runs/"):
+        return _workspace_run_view(unquote(clean[len("/api/workspace/runs/"):]))
     if clean == "/api/demo":  # backward-compatible alias
         return _ok(_decide("IBD:TYK2"))
 

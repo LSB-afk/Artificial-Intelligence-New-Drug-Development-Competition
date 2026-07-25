@@ -50,8 +50,10 @@ export default function TargetsView({ targets, evidence, selectedSymbol, onSelec
                       <strong className="target-symbol">{target.symbol}</strong><span className="target-name">{target.name}</span>
                     </button>
                   </td>
-                  <td><div className="metric-with-bar"><strong>{target.association.toFixed(4)}</strong><span><i style={{ width: `${target.association * 100}%` }} /></span></div></td>
-                  <td><span className={`tractability tract-${target.tractability.toLowerCase()}`}>{target.tractability}</span></td>
+                  <td>{target.association === null
+                    ? <span className="metric-absent" title="이 실행의 근거 패킷에 출처 연관 점수가 없습니다.">미수집</span>
+                    : <div className="metric-with-bar"><strong>{target.association.toFixed(4)}</strong><span><i style={{ width: `${target.association * 100}%` }} /></span></div>}</td>
+                  <td><span className={`tractability tract-${target.tractability.toLowerCase()}`}>{target.tractability === 'Unknown' ? '미수집' : target.tractability}</span></td>
                   <td>{target.assay}</td><td>{target.clinical}</td><td><StatusBadge status={target.decision} /></td>
                 </tr>
               ))}

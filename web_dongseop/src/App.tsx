@@ -30,7 +30,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import StatusBadge from './components/StatusBadge'
 import { scenarioOptions } from './data/demoScenarios'
-import type { ScenarioKind, StageStatus, TabId } from './domain/contracts'
+import type { RunSnapshot, ScenarioKind, StageStatus, TabId } from './domain/contracts'
 import { formatDateTime, formatDuration, formatTime } from './lib/format'
 import { useHarnessWorkspace } from './state/useHarnessWorkspace'
 import AgentHarnessView from './views/AgentHarnessView'
@@ -59,6 +59,17 @@ const tabs: Array<{ id: TabId; label: string; icon: typeof LayoutDashboard }> = 
 
 const terminalStatuses: StageStatus[] = ['completed', 'warning', 'failed', 'skipped', 'blocked', 'cancelled']
 
+/**
+ * 하네스 실행에서 분자 화면이 빈 이유. 기각과 승인 대기는 서로 다른 상태이고,
+ * 둘 다 "실패해서 비었다"가 아니라 "게이트가 열리지 않았다"입니다.
+ */
+function moleculeGateNote(snapshot: RunSnapshot) {
+  if (snapshot.run.scenarioKind !== 'harness-decision') return undefined
+  return snapshot.targets[0]?.decision === 'rejected'
+    ? '진행 거절 판정이라 분자 단계를 열지 않았습니다.'
+    : '판정은 통과했지만 사람 승인 전에는 분자 단계를 열지 않습니다.'
+}
+
 function LiveElapsed({ startedAt }: { startedAt: string }) {
   const [now, setNow] = useState(() => Date.now())
 
@@ -74,7 +85,7 @@ function LiveElapsed({ startedAt }: { startedAt: string }) {
 
 function App() {
   const {
-    runs, snapshot, selectedRunId, isLoading, error,
+    runs, snapshot, selectedRunId, isLoading, error, isConnected,
     selectRun, createRun, cancelRun, markReviewed, explainTarget,
   } = useHarnessWorkspace()
   const [activeTab, setActiveTab] = useState<TabId>('overview')
@@ -205,7 +216,7 @@ function App() {
     if (activeTab === 'recommendations') return <RecommendationsView snapshot={snapshot} />
     if (activeTab === 'reasoning') return <ReasoningView snapshot={snapshot} onExplain={explainTarget} />
     if (activeTab === 'targets') return <TargetsView targets={snapshot.targets} evidence={snapshot.evidence} selectedSymbol={selectedTarget} onSelect={setSelectedTarget} />
-    if (activeTab === 'molecules') return <MoleculesView molecules={snapshot.molecules} scenarioKind={snapshot.run.scenarioKind} runStatus={snapshot.run.status} onOpenFixture={() => { void openMoleculeFixture() }} />
+    if (activeTab === 'molecules') return <MoleculesView molecules={snapshot.molecules} scenarioKind={snapshot.run.scenarioKind} runStatus={snapshot.run.status} gateNote={moleculeGateNote(snapshot)} onOpenFixture={() => { void openMoleculeFixture() }} />
     if (activeTab === 'failures') return <FailuresView failures={snapshot.failures} />
     if (activeTab === 'audit') return <AuditView snapshot={snapshot} />
     if (activeTab === 'report') return <ReportView snapshot={snapshot} />
@@ -247,6 +258,12 @@ function App() {
   const systemViewLabel = systemViewLabels[activeTab] ?? 'AI 조직도'
   const systemGroupLabel = opsTabs.includes(activeTab) ? 'AI·자동화 관리' : 'AI 운영'
   const selectedScenarioOption = scenarioOptions.find((option) => option.id === selectedScenario) ?? scenarioOptions[0]
+  const contextBanner = run.classification === 'synthetic'
+    ? { title: '합성 UI fixture', detail: '연구 결과가 아니며 화면 동작 확인에만 사용합니다.' }
+    : run.classification === 'computed'
+      ? { title: '하네스가 계산한 판정', detail: '판정·규칙·근거 ID는 파이썬 결정 코어가 계산했습니다. 근거 패킷은 시드 픽스처이며 효능을 주장하지 않습니다.' }
+      : { title: '저장된 출처 스냅샷', detail: '현재 외부 API를 조회한 결과가 아닙니다. 관측일과 출처 ID를 함께 확인하세요.' }
+  const classificationLabel = run.classification === 'synthetic' ? '합성 데이터' : run.classification === 'computed' ? '계산 결과' : '출처 스냅샷'
 
   return (
     <div className={`app-shell${isRunning ? ' is-running' : ''}`}>
@@ -298,7 +315,7 @@ function App() {
         </div>
 
         <div className="sidebar-footer">
-          <div className="prototype-note"><Radio size={16} /><div><strong>모의 하네스 연결</strong><span>RunSnapshot 계약 · v1</span></div></div>
+          <div className="prototype-note"><Radio size={16} /><div><strong>{isConnected ? '파이썬 하네스 연결' : '하네스 오프라인'}</strong><span>{isConnected ? '계산된 실행 + 고정 픽스처' : '고정 픽스처만 표시'}</span></div></div>
         </div>
       </aside>
 
@@ -310,13 +327,13 @@ function App() {
             <button className="mobile-menu icon-button" type="button" onClick={() => setIsSidebarOpen(true)} aria-label="메뉴 열기"><Menu size={19} /></button>
             <span>{isSystemView ? systemGroupLabel : '실행'}</span><span className="breadcrumb-separator">/</span><strong>{isSystemView ? systemViewLabel : run.id}</strong>
           </div>
-          <div className="topbar-actions"><span className="adapter-state"><Database size={14} /> 스냅샷 연결</span><div className="avatar" aria-label="사용자 프로필">VS</div></div>
+          <div className="topbar-actions"><span className={`adapter-state${isConnected ? ' is-connected' : ''}`}>{isConnected ? <Bot size={14} /> : <Database size={14} />} {isConnected ? '하네스 연결됨' : '스냅샷 연결'}</span><div className="avatar" aria-label="사용자 프로필">VS</div></div>
         </header>
 
         {!isSystemView && <div className={`context-banner context-${run.classification}`} role="note">
-          {run.classification === 'synthetic' ? <FlaskConical size={16} /> : <Database size={16} />}
-          <strong>{run.classification === 'synthetic' ? '합성 UI fixture' : '저장된 출처 스냅샷'}</strong>
-          <span>{run.classification === 'synthetic' ? '연구 결과가 아니며 화면 동작 확인에만 사용합니다.' : '현재 외부 API를 조회한 결과가 아닙니다. 관측일과 출처 ID를 함께 확인하세요.'}</span>
+          {run.classification === 'synthetic' ? <FlaskConical size={16} /> : run.classification === 'computed' ? <Bot size={16} /> : <Database size={16} />}
+          <strong>{contextBanner.title}</strong>
+          <span>{contextBanner.detail}</span>
         </div>}
         {error && <div className="error-banner" role="alert"><AlertOctagon size={15} />{error}</div>}
 
@@ -356,7 +373,7 @@ function App() {
           <div className={isRunning ? 'live-metric' : undefined}><span>실행 시간</span><strong>{isRunning ? <LiveElapsed startedAt={run.createdAt} /> : formatDuration(run.durationMs)}</strong><small><Clock3 size={13} /> {isRunning ? `${activityStage?.label ?? '하네스'} 처리 중` : `갱신 ${formatDateTime(run.updatedAt)}`}</small></div>
           <div><span>타깃 판단</span><strong>{snapshot.targets.length ? `기각 ${metrics.rejected} · 검토 ${metrics.review}` : '해당 없음'}</strong><small>채택된 타깃 0</small></div>
           <div><span>분자 출력</span><strong>{snapshot.molecules.length ? `${snapshot.molecules.length}개 UI fixture` : '0개 · 미실행'}</strong><small>{snapshot.molecules.length ? '모두 합성 테스트 레코드' : '결정 게이트에서 중단'}</small></div>
-          <div><span>데이터 분류</span><strong>{run.classification === 'synthetic' ? '합성 데이터' : '출처 스냅샷'}</strong><small>{run.mode === 'snapshot' ? '모의 연결' : '실시간 연결'}</small></div>
+          <div><span>데이터 분류</span><strong>{classificationLabel}</strong><small>{run.mode === 'snapshot' ? '모의 연결' : '하네스 연결'}</small></div>
         </section>}
 
         {!isSystemView && <nav className="tabbar" role="tablist" aria-label="실행 상세 화면">

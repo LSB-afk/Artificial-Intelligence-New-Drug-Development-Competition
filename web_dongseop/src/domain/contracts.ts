@@ -15,7 +15,12 @@ export type TabId =
   | 'reasoning'
 
 export type DataMode = 'snapshot' | 'live'
-export type ScenarioKind = 'evidence-review' | 'molecule-ui-fixture'
+/**
+ * `harness-decision`은 파이썬 결정 코어가 계산해 `/api/workspace/runs`로 내려준
+ * 실행입니다. 나머지 둘은 하네스가 없을 때도 콘솔이 동작하도록 남겨 둔 고정
+ * 픽스처입니다. 이 구분은 화면에서 분류 배지로 그대로 드러납니다.
+ */
+export type ScenarioKind = 'evidence-review' | 'molecule-ui-fixture' | 'harness-decision'
 export type DataClassification = 'source_snapshot' | 'computed' | 'synthetic'
 
 export type RunStatus =
@@ -105,8 +110,9 @@ export interface TargetSnapshot {
   symbol: string
   name: string
   rank: number
-  association: number
-  tractability: 'High' | 'Medium' | 'Low'
+  /** 출처 연관 점수. 하네스 패킷에 값이 없으면 null이며 화면은 공백을 표시합니다. */
+  association: number | null
+  tractability: 'High' | 'Medium' | 'Low' | 'Unknown'
   assay: string
   clinical: string
   scoreBefore: number

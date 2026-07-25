@@ -15,10 +15,12 @@ interface MoleculesViewProps {
   molecules: MoleculeSnapshot[]
   scenarioKind: ScenarioKind
   runStatus: RunStatus
+  /** 하네스 실행에서 분자 단계를 막은 이유. 기각과 승인 대기는 다른 상태입니다. */
+  gateNote?: string
   onOpenFixture: () => void
 }
 
-export default function MoleculesView({ molecules, scenarioKind, runStatus, onOpenFixture }: MoleculesViewProps) {
+export default function MoleculesView({ molecules, scenarioKind, runStatus, gateNote, onOpenFixture }: MoleculesViewProps) {
   const [filter, setFilter] = useState<MoleculeFilter>('all')
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState(molecules[0]?.id ?? '')
@@ -40,7 +42,7 @@ export default function MoleculesView({ molecules, scenarioKind, runStatus, onOp
     return (
       <section className="empty-state-panel molecule-empty-state">
         {isFixtureLoading ? <Clock3 size={28} /> : <ShieldOff size={28} />}
-        <h2>{isFixtureLoading ? '합성 fixture 레코드를 생성하는 중입니다.' : '타깃 기각으로 분자 단계가 실행되지 않았습니다.'}</h2>
+        <h2>{isFixtureLoading ? '합성 fixture 레코드를 생성하는 중입니다.' : gateNote ?? '타깃 기각으로 분자 단계가 실행되지 않았습니다.'}</h2>
         <p>{isFixtureLoading ? '후보 생성 단계가 끝나기 전에는 분자와 proxy 수치를 표시하지 않습니다.' : '후보 생성, 활성 대리평가, ADMET, 합성 가능성 수치는 만들지 않았습니다. 이 빈 상태가 현재 실행의 올바른 결과입니다.'}</p>
         {!isFixtureLoading && <button className="secondary-button" type="button" onClick={onOpenFixture}><Beaker size={16} /> 분자 비교 UI fixture 열기</button>}
       </section>

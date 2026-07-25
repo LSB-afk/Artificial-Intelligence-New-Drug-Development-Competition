@@ -3,8 +3,19 @@ import StatusBadge from '../components/StatusBadge'
 import type { Artifact, RunSnapshot } from '../domain/contracts'
 import { downloadText, formatDateTime } from '../lib/format'
 
+// 픽스처 실행은 TYK2가 주인공이지만, 하네스 실행은 가설마다 대상이 다릅니다.
+const focusTargetOf = (snapshot: RunSnapshot) =>
+  snapshot.targets.find((item) => item.symbol === 'TYK2') ?? snapshot.targets[0]
+
 function buildReport(snapshot: RunSnapshot) {
-  const target = snapshot.targets.find((item) => item.symbol === 'TYK2')
+  // 하네스가 계산한 실행은 하네스가 쓴 보고서를 그대로 씁니다. 프런트가 다시
+  // 쓰면 화면의 문장이 더 이상 계산 결과가 아니게 됩니다.
+  if (snapshot.run.scenarioKind === 'harness-decision') {
+    const report = snapshot.artifacts.find((artifact) => artifact.id === 'decision-report')?.content
+    if (report) return report
+  }
+
+  const target = focusTargetOf(snapshot)
   if (snapshot.run.scenarioKind === 'molecule-ui-fixture') {
     return [
       'H2L-Forge UI Fixture Summary',
@@ -38,8 +49,8 @@ function artifactContent(artifact: Artifact, snapshot: RunSnapshot) {
 }
 
 export default function ReportView({ snapshot }: { snapshot: RunSnapshot }) {
-  const { run, targets, evidence, molecules, artifacts, safetyNotices } = snapshot
-  const focusTarget = targets.find((target) => target.symbol === 'TYK2')
+  const { run, evidence, molecules, artifacts, safetyNotices } = snapshot
+  const focusTarget = focusTargetOf(snapshot)
   const focusEvidence = focusTarget ? evidence.filter((item) => focusTarget.evidenceIds.includes(item.id)) : []
   const supporting = focusEvidence.filter((item) => item.polarity === 'supporting')
   const conflicting = focusEvidence.filter((item) => item.polarity === 'conflicting')
