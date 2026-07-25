@@ -59,7 +59,7 @@ PYTHONPATH=src python3 -m h2l.cli eval --cases evals/decision_cases.json --out a
 PYTHONPATH=src python3 -m h2l.server --host 127.0.0.1 --port 8765
 ```
 
-`python3 -m pytest`는 RDKit이 설치된 환경에서 167개, 없는 환경에서 145개 통과 + 1개 skip이다. 이 중 4개 real-socket HTTP 테스트는 실행 환경이 `127.0.0.1` 바인드를 허용해야 통과한다.
+`python3 -m pytest`는 RDKit이 설치된 환경에서 186개, 없는 환경에서 164개 통과 + 1개 skip이다. 이 중 4개 real-socket HTTP 테스트는 실행 환경이 `127.0.0.1` 바인드를 허용해야 통과한다.
 
 코어가 보장하는 4가지 이식 불변조건:
 
@@ -135,6 +135,39 @@ PYTHONPATH=src python3 -m h2l.server --host 127.0.0.1 --port 8765
 
 Ollama가 꺼져 있거나 응답이 늦어도 `/api/explain`은 200과 템플릿 문장을 돌려준다. 콘솔은 출처 칩으로 `로컬 모델`과 `결정론적 템플릿`을 구분해 보여준다.
 
+## 연구 콘솔 (web_dongseop)
+
+`web_dongseop`는 실행 화면을 그리는 React 콘솔이다. 예전에는 화면 데이터가 전부 TypeScript에 손으로 적혀 있어서, 파이썬 코어를 통째로 지워도 화면이 똑같았다. 지금은 `src/h2l/workspace.py`가 결정 결과를 콘솔의 `RunSnapshot` 계약으로 투영하고, 읽기 전용 `GET /api/workspace/runs`가 그것을 내려준다.
+
+```bash
+# 1) 하네스
+PYTHONPATH=src python3 -m h2l.server --host 127.0.0.1 --port 8765
+
+# 2) 콘솔 (:4173, /api는 위 서버로 프록시)
+cd web_dongseop && npm run dev
+```
+
+| 라우트 | 내용 |
+|---|---|
+| `GET /api/workspace/runs` | 현재 가설별 실행 요약. 막힌 실행이 먼저 온다 |
+| `GET /api/workspace/runs/{run_id}` | 단계·근거·타깃·중단·이벤트·산출물 전체 스냅샷 |
+
+**연동을 확인하는 방법: 하네스를 끄면 계산된 실행이 목록에서 사라진다.** 그 상태에서도 콘솔은 고정 픽스처로 열리고, 상단 칩이 `하네스 연결됨`에서 `스냅샷 연결`로 바뀐다. 두 종류는 분류 배지(`계산 결과` / `출처 스냅샷` / `합성 데이터`)로 구분된다.
+
+투영이 지키는 규칙:
+
+- 화면의 모든 값은 결정 결과, 승인된 근거 패킷, 또는 여기 적힌 규칙에서 나온다.
+- 패킷에 없는 값(Open Targets association score, tractability)은 자리표시 숫자를 만들지 않고 **"미수집"**으로 표시한다.
+- 운영 점수는 과학 점수가 아니라 **근거 커버리지** 계산값이다. `비평 전`은 지지 근거만 세는 baseline critic이 내릴 결론이고, `비평 후`는 적응증 일치·반증 규칙을 적용한 뒤 남는 값이다. TYK2는 100 → 0이며, 차감 3건이 각각 규칙과 근거 ID를 달고 있다.
+- 판정만으로는 분자가 나오지 않는다. `REJECT`는 게이트가, `ADVANCE`는 사람 승인이 분자 단계를 막는다(`AWAITING_APPROVAL`).
+- 승인되지 않은 최신 스냅샷은 화면에 도달하지 않는다.
+
+콘솔 회귀 검사는 하네스를 **끈 상태**로 돈다. 이 상태에서 폴백이 동작하는지까지 함께 확인한다.
+
+```bash
+cd web_dongseop && npm run qa
+```
+
 ## 하데스 콘솔
 
 Hades Console은 프로젝트 운영을 위한 dependency-free 관리 콘솔이다. Python 표준 라이브러리 HTTP 서버와 정적 HTML/CSS/JavaScript만 사용하며, 과학 의사결정 코어와 같은 프로세스에서 실행되지만 mutable state는 `src/h2l/console_store.py`의 별도 JSON 저장소에 둔다.
@@ -186,4 +219,5 @@ git diff --check
 - AI agent harness의 CPS, 상태모델, PRD, 아키텍처, flow, eval, risk rule 초안 생성
 - JB 이식 코어 구현 완료: `src/h2l`(registry/state_machine/replay/eval_runner/cli), 결정론적 오프라인 평가 재현 확인
 - Hades Console 통합 완료: `server.py`, `console_store.py`, `static/` 관리 UI, JSON 단일 프로세스 persistence, 승인/활동 audit
-- 다음 작업: positive target evidence qualification, live Open Targets/ChEMBL/ClinicalTrials.gov adapter + snapshot fallback, `MOLECULE_ELIGIBLE` 이후 RDKit/ADMET 분자 검증
+- 연구 콘솔 백엔드 연동 완료: `workspace.py` + `GET /api/workspace/runs`로 `web_dongseop`가 하네스 계산 결과를 렌더링 (D-011)
+- 다음 작업: 평가셋 확장(decision 4건 → 10~15건), 리소스 효율 측정(cold vs replay), 비즈니스 가치 정량화, 분자 실행의 콘솔 투영

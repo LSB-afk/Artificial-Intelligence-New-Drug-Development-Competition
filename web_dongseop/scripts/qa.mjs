@@ -12,25 +12,49 @@ function assert(condition, message) {
   if (!condition) throw new Error(message)
 }
 
+// 이 QA는 파이썬 하네스를 끄고 도는 것이 기본입니다. 그 상태에서 개발 프록시는
+// /api/*에 5xx를 돌려주고 콘솔은 고정 픽스처로 폴백해야 합니다. 그 5xx는 고장이
+// 아니라 검증 대상이므로 오류로 세지 않고 따로 모읍니다.
+const isHarnessProbe = (url) => url.startsWith(new URL('/api/', baseUrl).href)
+
 async function observePage(page, errors) {
   page.on('console', (message) => {
-    if (message.type() === 'error') errors.push(`console: ${message.text()}`)
+    if (message.type() !== 'error') return
+    // 리소스 적재 실패는 응답 리스너가 이미 분류합니다. 하네스 탐색이면 중복 계상하지 않습니다.
+    if (isHarnessProbe(message.location()?.url ?? '')) return
+    errors.push(`console: ${message.text()}`)
   })
   page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`))
   page.on('response', (response) => {
-    if (response.status() >= 400) errors.push(`http ${response.status()}: ${response.url()}`)
+    if (response.status() < 400) return
+    if (isHarnessProbe(response.url())) offlineProbes.push(`${response.status()} ${new URL(response.url()).pathname}`)
+    else errors.push(`http ${response.status()}: ${response.url()}`)
   })
 }
 
 await mkdir(artifactDir, { recursive: true })
 const browser = await chromium.launch({ headless: true, executablePath: chromePath })
 const errors = []
+const offlineProbes = []
 const checks = []
 
 try {
   const desktop = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
   await observePage(desktop, errors)
   await desktop.goto(baseUrl, { waitUntil: 'networkidle' })
+
+  // 하네스가 없으면 계산된 실행은 목록에 없어야 하고, 콘솔은 픽스처로 열려야 합니다.
+  const offlineState = await desktop.evaluate(() => ({
+    adapter: document.querySelector('.adapter-state')?.textContent?.trim() ?? '',
+    connectedChip: document.querySelectorAll('.adapter-state.is-connected').length,
+    footer: document.querySelector('.prototype-note strong')?.textContent?.trim() ?? '',
+    runCount: document.querySelectorAll('.recent-runs button').length,
+  }))
+  assert(offlineState.connectedChip === 0, '하네스가 꺼져 있는데 연결됨 상태로 표시됩니다.')
+  assert(offlineState.footer === '하네스 오프라인', `하네스 오프라인 표기가 없습니다: ${offlineState.footer}`)
+  assert(offlineState.runCount === 2, `오프라인 상태의 실행 수가 픽스처 2개가 아닙니다: ${offlineState.runCount}`)
+  assert(offlineProbes.length > 0, '하네스 연결을 시도한 흔적이 없습니다.')
+  checks.push(`harness offline fallback ${JSON.stringify({ ...offlineState, offlineProbes })}`)
 
   await desktop.getByRole('heading', { name: 'IBD 타깃 근거 검토' }).waitFor()
   await desktop.getByText('TYK2는 이 IBD 실행의 분자 최적화 대상으로 진행하지 않습니다.').waitFor()
@@ -280,7 +304,7 @@ try {
   await new Promise((resolve) => setTimeout(resolve, 500))
   assert(errors.length === 0, `브라우저 오류가 있습니다:\n${errors.join('\n')}`)
 
-  process.stdout.write(`${JSON.stringify({ ok: true, checks, errors }, null, 2)}\n`)
+  process.stdout.write(`${JSON.stringify({ ok: true, checks, errors, offlineProbes }, null, 2)}\n`)
 } finally {
   await browser.close()
 }

@@ -54,6 +54,7 @@ implementation:
     molopt_eval: "src/h2l/molopt_eval.py"
     llm: "src/h2l/llm.py"
     chem: "src/h2l/chem.py"
+    workspace: "src/h2l/workspace.py"
     console_store: "src/h2l/console_store.py"
     server: "src/h2l/server.py"
   console:
@@ -148,6 +149,11 @@ decisions:
     date: "2026-07-25"
     decision: "Add an optional RDKit chemistry backend behind H2L_CHEM_BACKEND and keep the dependency-free reference adapters as the default."
     rationale: "The reference adapters read authored descriptors and a 16-bit hand-written fingerprint, so no result depended on real chemistry. The RDKit backend computes descriptors, QED, ECFP4 Tanimoto, SA score, and PAINS/Brenk alerts from SMILES at the same (molecule)->ToolResult seam. On a structure-backed pool the similarity-only baseline puts three reactive liabilities (Michael acceptor, acylhydrazine, alkyl halide) in its top-5 while the multi-objective gate rejects all of them: selection accuracy 0.571 -> 1.000, top-k precision 0.40 -> 1.00, paired bootstrap delta 0.429 with 95% CI [0.214, 0.714]. Keeping the reference backend as the default preserves the offline, dependency-free core and the byte-reproducible published ablation."
+
+  - id: "D-011"
+    date: "2026-07-25"
+    decision: "Serve the web console's RunSnapshot from the decision core through read-only GET /api/workspace/runs, and keep the authored fixtures as a labelled offline fallback rather than deleting them."
+    rationale: "The console rendered hand-authored TypeScript, so deleting the entire Python core would not have changed a pixel and no screen was evidence of the harness. The projection now derives run, stages, evidence, targets, failures, events, and artifacts from a real DrugDiscoveryHarness result and its approved packet: the TYK2 score reversal (100 -> 0) is three deductions that each name a rule and an evidence id, a pending snapshot still does not reach the screen, and both hypotheses show molecule stages blocked - REJECT by the gate and ADVANCE by human approval. Fields the packet does not carry (association score, tractability) are emitted as null/Unknown and rendered as absent instead of being filled with a placeholder number. The fixtures stay because the console must open without the harness and the molecule comparison screen has no computed equivalent yet; classification badges keep the two apart, and the connection chip goes green only when the harness actually answered."
 
 open_questions:
   - id: "Q-001"

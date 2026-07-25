@@ -36,6 +36,19 @@ export function validateSnapshot(snapshot: RunSnapshot) {
     }), '분자 단계가 결정 게이트 이후 미실행 상태가 아닙니다.')
   }
 
+  // 하네스가 계산해 내려준 실행. 결정 게이트를 통과하지 못한 단계는 빈 결과가
+  // 아니라 미실행이어야 하고, 판정만으로 분자가 나올 수는 없습니다.
+  if (snapshot.run.scenarioKind === 'harness-decision') {
+    invariant(snapshot.run.classification === 'computed', `${snapshot.run.id}는 하네스 계산 결과인데 분류가 computed가 아닙니다.`)
+    invariant(snapshot.molecules.length === 0, `${snapshot.run.id} 판정 실행에 분자 결과가 포함되어 있습니다.`)
+    invariant(snapshot.targets.length > 0, `${snapshot.run.id} 판정 실행에 타깃이 없습니다.`)
+    const gatedStages = ['seed', 'generate', 'activity', 'admet', 'synthesis']
+    invariant(gatedStages.every((id) => {
+      const status = snapshot.stages.find((stage) => stage.id === id)?.status
+      return status === 'skipped' || status === 'blocked'
+    }), `${snapshot.run.id}의 분자 단계가 결정 게이트 이후 미실행 상태가 아닙니다.`)
+  }
+
   if (snapshot.run.scenarioKind === 'molecule-ui-fixture' && hasFinalOutputs) {
     invariant(snapshot.run.classification === 'synthetic', '분자 UI fixture의 실행 분류가 synthetic이 아닙니다.')
     invariant(snapshot.molecules.length > 0, '분자 UI fixture에 표시할 레코드가 없습니다.')

@@ -1441,6 +1441,9 @@ code {
 .risk-medium { color: var(--amber); background: var(--amber-soft); }
 .tract-low,
 .risk-high { color: var(--red); background: var(--red-soft); }
+/* 값이 없다는 사실도 값입니다. 자리표시 숫자 대신 빈 상태를 그대로 보여줍니다. */
+.tract-unknown { color: var(--ink-muted); background: var(--surface-muted); }
+.metric-absent { color: var(--ink-muted); font-size: 9px; }
 
 .table-caption {
   display: flex;
@@ -1731,6 +1734,13 @@ code {
   background: var(--blue-soft);
   border: 1px solid rgba(47, 111, 228, 0.14);
   border-radius: 6px;
+}
+
+/* 하네스에 실제로 닿았을 때만 초록입니다. 연결 상태를 장식으로 쓰지 않습니다. */
+.adapter-state.is-connected {
+  color: var(--green);
+  background: var(--green-soft);
+  border-color: rgba(22, 138, 90, 0.16);
 }
 
 .context-banner,
@@ -2111,6 +2121,7 @@ body { font-size: 15px; }
 .origin-label,
 .proxy-label { font-size: 11px; }
 .metric-with-bar strong { font-size: 12px; }
+.metric-absent { font-size: 12px; }
 .tractability,
 .risk-label { font-size: 11px; }
 .table-caption { font-size: 11px; }

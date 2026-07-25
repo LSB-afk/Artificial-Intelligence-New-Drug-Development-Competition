@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { CreateRunInput, ExplainInput, RunSnapshot, RunSummary } from '../domain/contracts'
 import { validateSnapshot } from '../domain/validateSnapshot'
-import { harnessClient } from '../services/harnessClient'
+import { harnessClient, isHarnessConnected } from '../services/harnessClient'
 
+// 목록 순서는 어댑터가 정합니다. 갱신은 제자리에서 하고, 처음 보는 실행만
+// 맨 앞에 붙입니다. 하네스 실행과 픽스처가 서로 자리를 뺏지 않게 하려는 것입니다.
 function mergeRun(runs: RunSummary[], next: RunSummary) {
-  return [next, ...runs.filter((run) => run.id !== next.id)]
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  const index = runs.findIndex((run) => run.id === next.id)
+  if (index === -1) return [next, ...runs]
+  const merged = [...runs]
+  merged[index] = next
+  return merged
 }
 
 export function useHarnessWorkspace() {
@@ -14,6 +19,7 @@ export function useHarnessWorkspace() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [isConnected, setIsConnected] = useState(false)
 
   const acceptSnapshot = useCallback((candidate: RunSnapshot) => {
     const valid = validateSnapshot(candidate)
@@ -29,7 +35,11 @@ export function useHarnessWorkspace() {
         const runList = await harnessClient.listRuns()
         if (cancelled) return
         setRuns(runList)
-        const initialRun = runList.find((run) => run.scenarioKind === 'evidence-review') ?? runList[0]
+        setIsConnected(isHarnessConnected())
+        // 하네스가 계산한 실행이 있으면 그것부터 봅니다. 없으면 픽스처입니다.
+        const initialRun = runList.find((run) => run.scenarioKind === 'harness-decision')
+          ?? runList.find((run) => run.scenarioKind === 'evidence-review')
+          ?? runList[0]
         if (initialRun) {
           const next = await harnessClient.getRun(initialRun.id)
           if (cancelled) return
@@ -111,6 +121,7 @@ export function useHarnessWorkspace() {
     selectedRunId,
     isLoading,
     error,
+    isConnected,
     selectRun,
     createRun,
     cancelRun,

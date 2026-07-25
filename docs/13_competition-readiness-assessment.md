@@ -35,7 +35,7 @@ We are a **분야 4 (융합)** entry.
 | 에이전트 자율성·지능 (본선 10) | 🟡 | 로컬 LLM 설명 계층 + 가드레일·폴백 가동 (2026-07-25). 계획/재시도 루프는 미구현 |
 | 도구 활용·통합 (본선 15) | 🟡 | RDKit 실호출 가동 (descriptor·QED·ECFP4·SA·PAINS). ADMET-AI·RAscore·외부 API는 여전히 미검증 |
 | 리소스 효율 (본선 15) | 🔴 | 크레딧/시간 수치 미측정 |
-| 시연·완성도 (본선 30) | 🟡 | 콘솔 작동. web_dongseop 단일 콘솔로 정리 중, 백엔드 미연동 |
+| 시연·완성도 (본선 30) | 🟡 | 콘솔이 하네스 계산 결과를 렌더링 (2026-07-25). 서버를 끄면 계산된 실행이 사라지는 것으로 연동 확인 가능. 분자 비교 화면은 아직 픽스처 |
 
 ## Current Status and Measured Results (seed 42)
 
@@ -65,7 +65,9 @@ We are a **분야 4 (융합)** entry.
 **P0 — 대회 코어 공백:**
 1. ~~Ollama를 오케스트레이션+설명 계층으로 삽입~~ → **완료 (2026-07-25, D-009).** `src/h2l/llm.py` + `GET /api/explain` + 콘솔 "판단 해설". 모델은 사실 권한 없이 설명만 쓰고, 가드레일(숫자·근거 ID·인용·판정 뒤집기·치료 주장·추론 노출)이 위반 출력을 폐기하고 결정론적 템플릿으로 대체. 기본 OFF, 오프라인 유지. 자기 수정 시나리오는 "하네스 다운 → 폴백"과 "미승인 가설 → fail-closed HOLD"로 관측됨.
 2. ~~도구 최소 1개 실호출~~ → **완료 (2026-07-25, D-010).** `src/h2l/chem.py`가 descriptor·QED·ECFP4·SA·PAINS/Brenk를 SMILES에서 실제 계산. 구조 기반 풀에서 selection accuracy 0.571 → 1.000, precision 0.40 → 1.00, bootstrap Δ 0.429 CI [0.214, 0.714]. 유사도만 쓰는 baseline이 반응성 액체 3개를 top-5에 올리는 것을 실측으로 보임. **ADMET-AI·RAscore는 여전히 미검증(R-003)이며 정확도 주장 없음.**
-3. web_dongseop 단일 콘솔화 + **백엔드 연동**: 해설 경로만 실제 `/api/explain`을 거치고, 실행 데이터는 아직 `mockHarness`다. README의 최소 API(`/api/runs…`)로 HTTP 어댑터 교체 필요. → 시연 30. **(남은 P0)**
+3. ~~web_dongseop 단일 콘솔화 + **백엔드 연동**~~ → **완료 (2026-07-25, D-011).** `src/h2l/workspace.py`가 결정 결과를 콘솔 `RunSnapshot`으로 투영하고 읽기 전용 `GET /api/workspace/runs`가 내려준다. 하네스가 살아 있으면 **계산된 실행**이 목록 맨 위에 오고, 끄면 그 실행이 사라지며 고정 픽스처로 폴백한다. TYK2 점수 반전(100 → 0)은 규칙과 근거 ID를 각각 붙인 차감 3건이고, 미승인 스냅샷은 화면에 도달하지 않으며, REJECT는 게이트가 ADVANCE는 사람 승인이 분자 단계를 막는다. 패킷에 없는 값(association·tractability)은 자리표시 숫자 대신 "미수집"으로 표시한다. → 시연 30.
+
+**P0 잔여 없음.** 다음은 P1이다.
 
 **P1 — 정량 근거:**
 4. 평가셋 확장(decision 4 → 10~15, molopt pool 확대, ChEMBL holdout 일부). → 성능평가 10.
