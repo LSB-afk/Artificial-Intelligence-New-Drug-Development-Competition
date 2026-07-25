@@ -32,8 +32,8 @@ We are a **분야 4 (융합)** entry.
 | 비즈니스/사회 가치 (예선 20) | 🔴 | 시간·비용 절감이 전부 TODO |
 | 연구윤리·완성도 (예선 10) | ✅ | guardrail·no-CoT·human approval·audit |
 | 과학적 타당성·혁신성 (본선 30) | ✅/🟡 | 설계 강함 / 수치는 fixture 대상 |
-| 에이전트 자율성·지능 (본선 10) | 🔴 | 자기 인지·수정 LLM 루프 부재 |
-| 도구 활용·통합 (본선 15) | 🔴 | RDKit/외부 API가 실호출 아닌 fixture·휴리스틱 |
+| 에이전트 자율성·지능 (본선 10) | 🟡 | 로컬 LLM 설명 계층 + 가드레일·폴백 가동 (2026-07-25). 계획/재시도 루프는 미구현 |
+| 도구 활용·통합 (본선 15) | 🟡 | RDKit 실호출 가동 (descriptor·QED·ECFP4·SA·PAINS). ADMET-AI·RAscore·외부 API는 여전히 미검증 |
 | 리소스 효율 (본선 15) | 🔴 | 크레딧/시간 수치 미측정 |
 | 시연·완성도 (본선 30) | 🟡 | 콘솔 작동. web_dongseop 단일 콘솔로 정리 중, 백엔드 미연동 |
 
@@ -62,10 +62,10 @@ We are a **분야 4 (융합)** entry.
 
 ## Prioritized Gaps and Direction
 
-**P0 — 대회 코어 공백 (지금):**
-1. Ollama를 오케스트레이션+설명 계층으로 삽입. 자기 수정 시나리오 1개(잘못된 입력 → 인지 → 폴백/재시도)를 데모 하이라이트로. → 자율성 10 + 시연 30 + 독창성.
-2. 도구 최소 1개 실호출: `similarity_proxy`/`druglikeness`를 실제 RDKit(Morgan·QED)로 교체, ADMET-AI smoke test 또는 명시적 limited fallback. → 도구활용 15.
-3. web_dongseop 단일 콘솔화 + 백엔드 연동: README의 최소 API(`/api/runs…`)로 mockHarness를 HTTP 어댑터로 교체. → 시연 30.
+**P0 — 대회 코어 공백:**
+1. ~~Ollama를 오케스트레이션+설명 계층으로 삽입~~ → **완료 (2026-07-25, D-009).** `src/h2l/llm.py` + `GET /api/explain` + 콘솔 "판단 해설". 모델은 사실 권한 없이 설명만 쓰고, 가드레일(숫자·근거 ID·인용·판정 뒤집기·치료 주장·추론 노출)이 위반 출력을 폐기하고 결정론적 템플릿으로 대체. 기본 OFF, 오프라인 유지. 자기 수정 시나리오는 "하네스 다운 → 폴백"과 "미승인 가설 → fail-closed HOLD"로 관측됨.
+2. ~~도구 최소 1개 실호출~~ → **완료 (2026-07-25, D-010).** `src/h2l/chem.py`가 descriptor·QED·ECFP4·SA·PAINS/Brenk를 SMILES에서 실제 계산. 구조 기반 풀에서 selection accuracy 0.571 → 1.000, precision 0.40 → 1.00, bootstrap Δ 0.429 CI [0.214, 0.714]. 유사도만 쓰는 baseline이 반응성 액체 3개를 top-5에 올리는 것을 실측으로 보임. **ADMET-AI·RAscore는 여전히 미검증(R-003)이며 정확도 주장 없음.**
+3. web_dongseop 단일 콘솔화 + **백엔드 연동**: 해설 경로만 실제 `/api/explain`을 거치고, 실행 데이터는 아직 `mockHarness`다. README의 최소 API(`/api/runs…`)로 HTTP 어댑터 교체 필요. → 시연 30. **(남은 P0)**
 
 **P1 — 정량 근거:**
 4. 평가셋 확장(decision 4 → 10~15, molopt pool 확대, ChEMBL holdout 일부). → 성능평가 10.

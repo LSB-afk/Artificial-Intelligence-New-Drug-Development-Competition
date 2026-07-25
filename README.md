@@ -59,7 +59,7 @@ PYTHONPATH=src python3 -m h2l.cli eval --cases evals/decision_cases.json --out a
 PYTHONPATH=src python3 -m h2l.server --host 127.0.0.1 --port 8765
 ```
 
-`python3 -m pytest`는 현재 145개 테스트를 수집한다. 이 중 4개 real-socket HTTP 테스트는 실행 환경이 `127.0.0.1` 바인드를 허용해야 통과한다.
+`python3 -m pytest`는 RDKit이 설치된 환경에서 167개, 없는 환경에서 145개 통과 + 1개 skip이다. 이 중 4개 real-socket HTTP 테스트는 실행 환경이 `127.0.0.1` 바인드를 허용해야 통과한다.
 
 코어가 보장하는 4가지 이식 불변조건:
 
@@ -67,6 +67,41 @@ PYTHONPATH=src python3 -m h2l.server --host 127.0.0.1 --port 8765
 2. 타깃 판단과 분자 단계 사이에 결정론적 상태 전이와 사람 승인을 둔다(`state_machine`).
 3. 도구가 실패해도 고정 스냅샷으로 동일한 판단을 재생한다(`replay`, snapshot-first fallback).
 4. 평가 plane은 과학 상태를 변경하지 못하며, 같은 seed로 두 번 실행하면 byte-equivalent하다(`eval_runner`).
+
+## 화학 백엔드 (선택)
+
+`src/h2l/tools.py`의 `(molecule) -> ToolResult` seam은 두 가지 구현을 갖는다.
+
+| | reference (기본) | rdkit (선택) |
+|---|---|---|
+| descriptor | 레코드에 적힌 값을 읽음 | SMILES에서 계산 |
+| druglikeness | 사다리꼴 근사 QED | RDKit `QED.qed` |
+| similarity | 16비트 수기 지문 Tanimoto | ECFP4 (Morgan r=2, 2048bit) Tanimoto |
+| synthesizability | 원자 수 공식 | RDKit Contrib SA score |
+| safety_alerts | 문자열 목록 조회 | PAINS + Brenk `FilterCatalog` 부분구조 매칭 |
+
+기본값이 reference인 이유는 코어의 무의존성과 발표된 ablation의 바이트 재현성을 지키기 위해서다. RDKit은 선택 의존성이며, 없으면 `tests/test_chem.py`는 건너뛴다.
+
+```bash
+python3 -m pip install -r requirements-chem.txt
+
+# 실제 구조 기반 ablation
+PYTHONPATH=src python3 -m h2l.cli molopt-eval \
+  --pool tests/fixtures/molopt/pool_rdkit.json --backend rdkit
+```
+
+측정 결과 (`tests/fixtures/molopt/pool_rdkit.json`, 분자 14개 / good 5개, seed 42):
+
+| | selection accuracy | top-k precision | top-k recall |
+|---|---|---|---|
+| baseline (ECFP4 유사도만) | 0.571 | 0.40 | 0.40 |
+| candidate (다목적 + 실제 경보) | **1.000** | **1.00** | **1.00** |
+
+paired bootstrap Δ = 0.429, 95% CI [0.214, 0.714] (0을 포함하지 않음).
+
+유사도만 쓰는 baseline은 상위 5위에 **반응성 액체 3개**(Michael acceptor, acylhydrazine, alkyl bromide)를 올린다. 셋 다 레퍼런스와 Tanimoto 0.76 내외로 매우 유사하지만, 다목적 게이트는 실제 구조 경보로 전부 기각한다. 이것이 "유사도는 활성이 아니다"라는 규칙이 코드에서 하는 일이다.
+
+`admet_risk`는 rdkit 백엔드에서도 **여전히 휴리스틱**이다. 실제 descriptor 위에서 돌 뿐이며 assay가 아니다. ADMET-AI 교체는 같은 seam에서 이루어지고, R-003에 따라 버전 고정 스모크 테스트가 선행되어야 한다.
 
 ## 판단 해설 (로컬 모델)
 

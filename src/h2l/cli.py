@@ -57,13 +57,14 @@ def cmd_molopt(args: argparse.Namespace) -> int:
         target_decision=args.target_decision,
         top_k=doc.get("top_k", 5),
         seed=doc.get("seed", 42),
+        backend=args.backend or doc.get("backend"),
     )
     print(_dumps(result))
     return 0
 
 
 def cmd_molopt_eval(args: argparse.Namespace) -> int:
-    report = run_molopt_eval(load_pool(Path(args.pool)))
+    report = run_molopt_eval(load_pool(Path(args.pool)), backend=args.backend)
     rendered = _dumps(report)
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
@@ -89,11 +90,13 @@ def build_parser() -> argparse.ArgumentParser:
     molopt_p.add_argument("--pool", required=True, help="path to a candidate pool JSON")
     molopt_p.add_argument("--run-mode", default="METHOD_ONLY", choices=["METHOD_ONLY", "SCIENTIFIC", "REJECTION_DEMO"])
     molopt_p.add_argument("--target-decision", default=None, help="ADVANCE/HOLD/REJECT of the eligible target")
+    molopt_p.add_argument("--backend", default=None, choices=["reference", "rdkit"], help="chemistry backend (default: pool's backend, else reference)")
     molopt_p.set_defaults(func=cmd_molopt)
 
     molopt_eval_p = sub.add_parser("molopt-eval", help="proxy-only vs multi-objective molecular ranking ablation")
     molopt_eval_p.add_argument("--pool", required=True, help="path to a labeled candidate pool JSON")
     molopt_eval_p.add_argument("--out", help="optional path to write the report JSON")
+    molopt_eval_p.add_argument("--backend", default=None, choices=["reference", "rdkit"], help="chemistry backend (default: pool's backend, else reference)")
     molopt_eval_p.set_defaults(func=cmd_molopt_eval)
 
     return parser

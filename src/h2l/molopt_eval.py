@@ -16,8 +16,8 @@ import json
 from pathlib import Path
 
 from h2l.eval_runner import paired_bootstrap
-from h2l.molopt import score_molecule
-from h2l.tools import _round, similarity_proxy
+from h2l.molopt import _as_backend, score_molecule
+from h2l.tools import _round
 
 
 def load_pool(path: Path) -> dict:
@@ -29,19 +29,19 @@ def _top_k_ids(scores: dict, top_k: int) -> list[str]:
     return [candidate_id for candidate_id, _ in ranked[:top_k]]
 
 
-def _candidate_scores(pool: list[dict], reference_actives: list[dict]) -> dict:
+def _candidate_scores(pool: list[dict], reference_actives: list[dict], tools) -> dict:
     # Multi-objective composite; hard-gate failures are scored 0 (excluded).
     scores = {}
     for mol in sorted(pool, key=lambda m: m["candidate_id"]):
-        scored = score_molecule(mol, reference_actives)
+        scored = score_molecule(mol, reference_actives, backend=tools)
         scores[mol["candidate_id"]] = 0.0 if scored["hard_fail"] else scored["composite_score"]
     return scores
 
 
-def _baseline_scores(pool: list[dict], reference_actives: list[dict]) -> dict:
+def _baseline_scores(pool: list[dict], reference_actives: list[dict], tools) -> dict:
     # Proxy-only: rank purely by similarity to known actives.
     return {
-        mol["candidate_id"]: similarity_proxy(mol, reference_actives)["value"]["tanimoto"]
+        mol["candidate_id"]: tools.similarity_proxy(mol, reference_actives)["value"]["tanimoto"]
         for mol in sorted(pool, key=lambda m: m["candidate_id"])
     }
 
@@ -56,7 +56,8 @@ def _metrics(top: list[str], correct: list[int], truth: dict, good_ids: list[str
     }
 
 
-def run_molopt_eval(doc: dict) -> dict:
+def run_molopt_eval(doc: dict, *, backend=None) -> dict:
+    tools = _as_backend(backend if backend is not None else doc.get("backend"))
     pool = doc["pool"]
     reference_actives = doc["reference_actives"]
     seed = doc.get("seed", 42)
@@ -68,8 +69,8 @@ def run_molopt_eval(doc: dict) -> dict:
     truth = {mol["candidate_id"]: (mol["label_desirability"] >= threshold) for mol in pool}
     good_ids = sorted(candidate_id for candidate_id, good in truth.items() if good)
 
-    baseline_scores = _baseline_scores(pool, reference_actives)
-    candidate_scores = _candidate_scores(pool, reference_actives)
+    baseline_scores = _baseline_scores(pool, reference_actives, tools)
+    candidate_scores = _candidate_scores(pool, reference_actives, tools)
     baseline_top = _top_k_ids(baseline_scores, top_k)
     candidate_top = _top_k_ids(candidate_scores, top_k)
 
@@ -84,6 +85,8 @@ def run_molopt_eval(doc: dict) -> dict:
         "run_mode": "METHOD_ONLY",
         "therapeutic_claim": False,
         "molecule_count": len(pool),
+        "backend": tools.name,
+        "backend_version": tools.version,
         "good_count": len(good_ids),
         "top_k": top_k,
         "seed": seed,
