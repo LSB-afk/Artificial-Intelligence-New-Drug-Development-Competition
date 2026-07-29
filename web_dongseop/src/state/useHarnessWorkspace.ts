@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   CreateRunInput,
   ExplainInput,
@@ -27,6 +27,7 @@ export function useHarnessWorkspace() {
   const [error, setError] = useState<string | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [scenarioOptions, setScenarioOptions] = useState<ScenarioOption[]>([])
+  const reconnectSeq = useRef(0)
 
   const acceptSnapshot = useCallback((candidate: RunSnapshot) => {
     const valid = validateSnapshot(candidate)
@@ -35,17 +36,44 @@ export function useHarnessWorkspace() {
     return valid
   }, [])
 
+  /**
+   * 하네스에 다시 물어 실행 목록과 시나리오를 갱신합니다.
+   *
+   * 연결 여부를 마운트 때 한 번만 확인하면, 콘솔을 열어 둔 채 서버를 켠 사용자는
+   * 새로고침하기 전까지 계속 "하네스에 닿지 않습니다"를 보게 됩니다. 이미 보고
+   * 있는 실행은 건드리지 않고 연결 상태만 다시 잽니다.
+   */
+  const reconnect = useCallback(async () => {
+    // 모달을 빠르게 여닫으면 조회가 겹칩니다. 둘 다 같은 클라이언트 인스턴스를
+    // 건드리므로, 늦게 끝난 응답이 먼저 끝난 응답을 덮어써야 화면과 연결 배지가
+    // 서로 다른 시점을 가리키지 않습니다.
+    const seq = (reconnectSeq.current += 1)
+    try {
+      const runList = await harnessClient.listRuns()
+      if (seq !== reconnectSeq.current) return null
+      setRuns(runList)
+      setIsConnected(isHarnessConnected())
+      // 목록 조회가 끝난 뒤에 물어야 하네스 연결 여부가 이미 정해져 있습니다.
+      const options = await harnessClient.listScenarios()
+      if (seq !== reconnectSeq.current) return null
+      setScenarioOptions(options)
+      return runList
+    } catch (cause) {
+      if (seq !== reconnectSeq.current) return null
+      setError(cause instanceof Error ? cause.message : '실행 목록을 불러오지 못했습니다.')
+      return null
+    }
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     const load = async () => {
+      const runList = await reconnect()
+      if (cancelled || !runList) {
+        if (!cancelled) setIsLoading(false)
+        return
+      }
       try {
-        const runList = await harnessClient.listRuns()
-        if (cancelled) return
-        setRuns(runList)
-        setIsConnected(isHarnessConnected())
-        // 목록 조회가 끝난 뒤에 물어야 하네스 연결 여부가 이미 정해져 있습니다.
-        setScenarioOptions(await harnessClient.listScenarios())
-        if (cancelled) return
         // 하네스가 계산한 실행이 있으면 그것부터 봅니다. 없으면 픽스처입니다.
         const initialRun = runList.find((run) => run.scenarioKind === 'harness-decision')
           ?? runList.find((run) => run.scenarioKind === 'evidence-review')
@@ -64,7 +92,7 @@ export function useHarnessWorkspace() {
     }
     void load()
     return () => { cancelled = true }
-  }, [acceptSnapshot])
+  }, [acceptSnapshot, reconnect])
 
   useEffect(() => {
     if (!selectedRunId) return
@@ -133,6 +161,7 @@ export function useHarnessWorkspace() {
     isLoading,
     error,
     isConnected,
+    reconnect,
     selectRun,
     createRun,
     cancelRun,

@@ -93,8 +93,14 @@ export class HttpHarnessClient implements HarnessClient {
     const payload = await requestJson<{ runs: RunSummary[] }>('/api/workspace/runs')
     const harnessSummaries = payload?.runs ?? []
     this.harnessReachable = Array.isArray(payload?.runs)
-    this.harnessIds = new Set(harnessSummaries.map((run) => run.id))
-    this.cache.clear()
+    // 닿지 못한 것은 "실행이 없다"가 아닙니다. 소유권까지 지우면 사용자가 지금 보고
+    // 있는 계산 실행이 픽스처 어댑터로 넘어가고, 검토 처리를 누르는 순간 "실행을
+    // 찾을 수 없습니다"가 됩니다. 목록 조회가 마운트 때 한 번뿐이던 시절에는 이
+    // 상태가 만들어질 수 없었지만, 이제는 모달을 열 때마다 다시 조회합니다.
+    if (this.harnessReachable) {
+      this.harnessIds = new Set(harnessSummaries.map((run) => run.id))
+      this.cache.clear()
+    }
     const fixtures = await this.fallback.listRuns()
     const sandbox = [...this.sandboxRuns.values()].map((snapshot) => structuredClone(snapshot.run))
     return [...sandbox, ...harnessSummaries, ...fixtures]

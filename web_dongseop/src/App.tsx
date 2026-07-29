@@ -85,7 +85,7 @@ function LiveElapsed({ startedAt }: { startedAt: string }) {
 function App() {
   const {
     runs, scenarioOptions, snapshot, selectedRunId, isLoading, error, isConnected,
-    selectRun, createRun, cancelRun, markReviewed, explainTarget,
+    reconnect, selectRun, createRun, cancelRun, markReviewed, explainTarget,
   } = useHarnessWorkspace()
   const [activeTab, setActiveTab] = useState<TabId>('overview')
   const [selectedStageId, setSelectedStageId] = useState('critic')
@@ -121,6 +121,13 @@ function App() {
       setSelectedTarget(snapshot.targets.find((target) => target.symbol === 'TYK2')?.symbol ?? snapshot.targets[0].symbol)
     }
   }, [selectedStageId, selectedTarget, snapshot])
+
+  // 시나리오를 고르려는 순간이 연결 여부가 실제로 중요한 순간입니다. 마운트 때
+  // 잰 값을 계속 쓰면, 콘솔을 열어 둔 채 하네스를 켠 사용자는 새로고침 전까지
+  // "닿지 않습니다"를 보게 됩니다.
+  useEffect(() => {
+    if (isModalOpen || activeTab === 'analysis-request') void reconnect()
+  }, [activeTab, isModalOpen, reconnect])
 
   // 목록이 도착하거나 연결 방식이 바뀌면 보이지 않는 시나리오가 선택된 채 남지 않게 합니다.
   useEffect(() => {
