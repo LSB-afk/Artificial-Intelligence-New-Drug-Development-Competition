@@ -157,7 +157,7 @@ def _evidence_detail(record: dict, polarity: str) -> str:
     return f"{indication} 적응증에서 {outcome} 결과이며 지지 근거로 셈했습니다."
 
 
-def _evidence(packet: dict) -> list[dict]:
+def _evidence(packet: dict, sandbox: bool = False) -> list[dict]:
     indication_ids = set(packet.get("indication_ids", []))
     observed_at = str(packet.get("observed_at", ""))[:10]
     items = []
@@ -173,7 +173,7 @@ def _evidence(packet: dict) -> list[dict]:
                 "sourceId": record["evidence_id"],
                 "observedAt": observed_at,
                 "polarity": polarity,
-                "classification": "source_snapshot",
+                "classification": "synthetic" if sandbox else "source_snapshot",
                 "href": source_ref,
             }
         )
@@ -215,7 +215,7 @@ def _target(decision: dict, packet: dict) -> dict:
     }
 
 
-def _stages(decision: dict, packet: dict) -> list[dict]:
+def _stages(decision: dict, packet: dict, sandbox: bool = False) -> list[dict]:
     observed_at = packet.get("observed_at")
     eligible = decision["molecule_eligible"]
     verdict = decision["decision"]
@@ -229,11 +229,20 @@ def _stages(decision: dict, packet: dict) -> list[dict]:
         {
             "id": "snapshot", "ordinal": 1, "label": "근거 스냅샷 적재", "agent": "Snapshot Registry",
             "status": "completed", "startedAt": observed_at, "endedAt": observed_at, "durationMs": 0,
-            "summary": f"승인된 스냅샷 {(decision.get('snapshot') or {}).get('version_id', '없음')}을 적재했습니다.",
-            "output": "content hash를 검증했고, 승인되지 않은 최신 버전은 판단에 쓰지 않았습니다.",
+            "summary": (
+                f"저장하지 않는 임시 패킷 {(decision.get('snapshot') or {}).get('version_id', '없음')}을 적재했습니다."
+                if sandbox
+                else f"승인된 스냅샷 {(decision.get('snapshot') or {}).get('version_id', '없음')}을 적재했습니다."
+            ),
+            "output": (
+                "승인 이력이 없는 패킷입니다. 레지스트리에 기록하지 않았고, 분자 단계는 어떤 판정에서도 열리지 않습니다."
+                if sandbox
+                else "content hash를 검증했고, 승인되지 않은 최신 버전은 판단에 쓰지 않았습니다."
+            ),
             "retryCount": 0, "inputArtifactIds": [], "outputArtifactIds": ["evidence-packet"],
             "toolCall": {"name": "SnapshotEvidenceAdapter", "version": RULESET_VERSION,
-                         "observedAt": str(observed_at)[:10], "classification": "source_snapshot"},
+                         "observedAt": str(observed_at)[:10],
+                         "classification": "synthetic" if sandbox else "source_snapshot"},
         },
         {
             "id": "critic", "ordinal": 2, "label": "근거 비평", "agent": "Clinical Contradiction Critic",
@@ -349,13 +358,13 @@ def _failures(decision: dict, packet: dict) -> list[dict]:
     return failures
 
 
-def _artifacts(decision: dict, packet: dict) -> list[dict]:
+def _artifacts(decision: dict, packet: dict, sandbox: bool = False) -> list[dict]:
     trace = {key: value for key, value in decision.items() if key != "packet"}
     return [
         {
             "id": "evidence-packet", "name": "normalized_evidence.json", "mimeType": "application/json",
-            "classification": "source_snapshot", "available": True,
-            "description": "판단에 사용한 승인 스냅샷 원본",
+            "classification": "synthetic" if sandbox else "source_snapshot", "available": True,
+            "description": "판단에 사용한 임시 패킷 (저장되지 않음)" if sandbox else "판단에 사용한 승인 스냅샷 원본",
             "content": json.dumps(packet, ensure_ascii=False, indent=2, sort_keys=True),
         },
         {
@@ -371,7 +380,11 @@ def _artifacts(decision: dict, packet: dict) -> list[dict]:
             "content": "\n".join(
                 [
                     "H2L-Forge Harness Decision",
-                    f"Run: {_run_id(decision)}",
+                    # The console marks a sandbox run in its shell, but this file leaves
+                    # the building on its own. It has to say so by itself.
+                    *(["Provenance: SANDBOX — unapproved, unsaved packet. Not a registry decision."]
+                      if sandbox else []),
+                    f"Run: {_run_id(decision, sandbox)}",
                     f"Hypothesis: {decision['hypothesis_id']}",
                     f"Decision: {decision['decision']} (state {decision['state']})",
                     f"Rules: {', '.join(decision.get('rule_ids', [])) or 'none'}",
@@ -407,20 +420,28 @@ def _safety_notices(decision: dict) -> list[dict]:
     return notices
 
 
-def _run_id(decision: dict) -> str:
+def _run_id(decision: dict, sandbox: bool = False) -> str:
     slug = decision["hypothesis_id"].replace(":", "-").replace("/", "-")
-    return f"RUN-{slug}-{decision['run_id'][:8]}"
+    # A sandbox run must not be mistaken for one of the approved runs the list
+    # route serves, so the id carries the distinction everywhere it travels.
+    return f"{'SANDBOX-' if sandbox else ''}RUN-{slug}-{decision['run_id'][:8]}"
 
 
-def run_snapshot(decision: dict) -> dict:
-    """Render a ``DrugDiscoveryHarness`` result as the console's RunSnapshot."""
+def run_snapshot(decision: dict, *, sandbox: bool = False) -> dict:
+    """Render a ``DrugDiscoveryHarness`` result as the console's RunSnapshot.
+
+    ``sandbox`` marks a run computed from an unapproved, unsaved packet. It does
+    not change a single decision value — it changes what the projection is
+    willing to *claim* about where the evidence came from, because the default
+    strings assert approved-registry provenance that a sandbox run does not have.
+    """
     packet = decision.get("packet") or {}
     disease_id = packet.get("disease_id", decision["hypothesis_id"])
     observed_at = packet.get("observed_at")
     verdict = decision["decision"]
     return {
         "run": {
-            "id": _run_id(decision),
+            "id": _run_id(decision, sandbox),
             "title": f"{packet.get('target', decision['hypothesis_id'])} 근거 판정",
             "disease": DISEASE_LABELS.get(disease_id, disease_id),
             "diseaseId": disease_id,
@@ -437,14 +458,14 @@ def run_snapshot(decision: dict) -> dict:
                 f"분자 단계 {'대기' if decision['molecule_eligible'] else '미실행'}"
             ),
         },
-        "stages": _stages(decision, packet),
-        "evidence": _evidence(packet),
+        "stages": _stages(decision, packet, sandbox),
+        "evidence": _evidence(packet, sandbox),
         "targets": [_target(decision, packet)],
         # A harness decision never produces molecules: ADVANCE parks at
         # AWAITING_APPROVAL and everything else is hard-blocked.
         "molecules": [],
         "failures": _failures(decision, packet),
         "events": _events(decision, packet),
-        "artifacts": _artifacts(decision, packet),
+        "artifacts": _artifacts(decision, packet, sandbox),
         "safetyNotices": _safety_notices(decision),
     }

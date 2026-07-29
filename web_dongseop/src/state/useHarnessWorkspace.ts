@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { CreateRunInput, ExplainInput, RunSnapshot, RunSummary } from '../domain/contracts'
+import type {
+  CreateRunInput,
+  ExplainInput,
+  RunSnapshot,
+  RunSummary,
+  ScenarioOption,
+} from '../domain/contracts'
 import { validateSnapshot } from '../domain/validateSnapshot'
 import { harnessClient, isHarnessConnected } from '../services/harnessClient'
 
@@ -20,6 +26,7 @@ export function useHarnessWorkspace() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [isConnected, setIsConnected] = useState(false)
+  const [scenarioOptions, setScenarioOptions] = useState<ScenarioOption[]>([])
 
   const acceptSnapshot = useCallback((candidate: RunSnapshot) => {
     const valid = validateSnapshot(candidate)
@@ -36,6 +43,9 @@ export function useHarnessWorkspace() {
         if (cancelled) return
         setRuns(runList)
         setIsConnected(isHarnessConnected())
+        // 목록 조회가 끝난 뒤에 물어야 하네스 연결 여부가 이미 정해져 있습니다.
+        setScenarioOptions(await harnessClient.listScenarios())
+        if (cancelled) return
         // 하네스가 계산한 실행이 있으면 그것부터 봅니다. 없으면 픽스처입니다.
         const initialRun = runList.find((run) => run.scenarioKind === 'harness-decision')
           ?? runList.find((run) => run.scenarioKind === 'evidence-review')
@@ -117,6 +127,7 @@ export function useHarnessWorkspace() {
 
   return {
     runs,
+    scenarioOptions,
     snapshot,
     selectedRunId,
     isLoading,

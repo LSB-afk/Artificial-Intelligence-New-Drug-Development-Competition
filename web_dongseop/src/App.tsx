@@ -29,8 +29,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import StatusBadge from './components/StatusBadge'
-import { scenarioOptions } from './data/demoScenarios'
-import type { RunSnapshot, ScenarioKind, StageStatus, TabId } from './domain/contracts'
+import type { DataMode, RunSnapshot, ScenarioKind, ScenarioOption, StageStatus, TabId } from './domain/contracts'
 import { formatDateTime, formatDuration, formatTime } from './lib/format'
 import { useHarnessWorkspace } from './state/useHarnessWorkspace'
 import AgentHarnessView from './views/AgentHarnessView'
@@ -85,18 +84,31 @@ function LiveElapsed({ startedAt }: { startedAt: string }) {
 
 function App() {
   const {
-    runs, snapshot, selectedRunId, isLoading, error, isConnected,
+    runs, scenarioOptions, snapshot, selectedRunId, isLoading, error, isConnected,
     selectRun, createRun, cancelRun, markReviewed, explainTarget,
   } = useHarnessWorkspace()
   const [activeTab, setActiveTab] = useState<TabId>('overview')
   const [selectedStageId, setSelectedStageId] = useState('critic')
   const [selectedTarget, setSelectedTarget] = useState('TYK2')
-  const [selectedScenario, setSelectedScenario] = useState<ScenarioKind>('evidence-review')
+  // 목록은 하네스 연결 여부에 따라 달라지므로 빈 값으로 시작해 도착한 첫 항목을 고릅니다.
+  const [selectedScenario, setSelectedScenario] = useState('')
+  const [connectionMode, setConnectionMode] = useState<DataMode>('live')
+  const [startError, setStartError] = useState<string | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([])
   const dialogRef = useRef<HTMLElement | null>(null)
+
+  // 연결 방식이 시나리오 목록을 거릅니다. 하네스가 닿지 않으면 계산 시나리오가
+  // 아예 없으므로 그 선택지는 실제로 고를 수 없고, 모달은 픽스처로 내려앉습니다.
+  const hasLiveScenarios = scenarioOptions.some((option) => option.harnessScenarioId)
+  const activeMode: DataMode = hasLiveScenarios ? connectionMode : 'snapshot'
+  const visibleScenarios = useMemo(
+    () => scenarioOptions.filter((option) => Boolean(option.harnessScenarioId) === (activeMode === 'live')),
+    [activeMode, scenarioOptions],
+  )
+  const selectedScenarioOption = visibleScenarios.find((option) => option.id === selectedScenario) ?? visibleScenarios[0]
 
   useEffect(() => {
     if (!snapshot) return
@@ -109,6 +121,12 @@ function App() {
       setSelectedTarget(snapshot.targets.find((target) => target.symbol === 'TYK2')?.symbol ?? snapshot.targets[0].symbol)
     }
   }, [selectedStageId, selectedTarget, snapshot])
+
+  // 목록이 도착하거나 연결 방식이 바뀌면 보이지 않는 시나리오가 선택된 채 남지 않게 합니다.
+  useEffect(() => {
+    if (visibleScenarios.some((option) => option.id === selectedScenario)) return
+    setSelectedScenario(visibleScenarios[0]?.id ?? '')
+  }, [visibleScenarios, selectedScenario])
 
   useEffect(() => {
     if (!isModalOpen) return
@@ -154,36 +172,42 @@ function App() {
     return { processed, completed, warnings, skipped, rejected, review }
   }, [snapshot])
 
-  const handleCreate = async () => {
+  // 모달과 "AI 분석 요청" 화면이 같은 선택지를 다루므로 시작 경로도 하나입니다.
+  // 실패하면 false를 돌려줍니다. 모달은 그때 닫히지 않고 사유를 띄웁니다.
+  const startScenario = async (option: ScenarioOption) => {
+    // "AI 분석 요청" 화면은 전체 목록을 보여 주므로, 거기서 고른 것이 모달의 현재
+    // 필터 밖일 수 있습니다. 모드를 선택에 맞춰 두 화면이 같은 것을 가리키게 합니다.
+    setConnectionMode(option.harnessScenarioId ? 'live' : 'snapshot')
+    setSelectedScenario(option.id)
+    setStartError(null)
     setIsCreating(true)
     try {
-      const next = await createRun({ scenario: selectedScenario, mode: 'snapshot' })
+      // 하네스 프리셋이면 파이썬 결정 코어가 규칙을 실행하고, 픽스처면 브라우저가 복제합니다.
+      const next = await createRun(option.harnessScenarioId
+        ? { scenario: 'harness-decision', mode: 'live', harnessScenarioId: option.harnessScenarioId }
+        : { scenario: option.id as ScenarioKind, mode: 'snapshot' })
       setSelectedStageId(next.stages[0]?.id ?? '')
       setSelectedTarget(next.targets.find((target) => target.symbol === 'TYK2')?.symbol ?? next.targets[0]?.symbol ?? '')
-      setActiveTab(selectedScenario === 'molecule-ui-fixture' ? 'molecules' : 'overview')
-      setIsModalOpen(false)
+      setActiveTab(option.id === 'molecule-ui-fixture' ? 'molecules' : 'overview')
+      return true
+    } catch (cause) {
+      setStartError(cause instanceof Error ? cause.message : '실행을 시작하지 못했습니다.')
+      return false
     } finally {
       setIsCreating(false)
     }
+  }
+
+  const handleCreate = async () => {
+    const option = scenarioOptions.find((item) => item.id === selectedScenario)
+    if (!option) return
+    if (await startScenario(option)) setIsModalOpen(false)
   }
 
   const handleSelectRun = async (runId: string) => {
     await selectRun(runId)
     setActiveTab('overview')
     setIsSidebarOpen(false)
-  }
-
-  const handleStartFromRequest = async (scenario: ScenarioKind) => {
-    setSelectedScenario(scenario)
-    setIsCreating(true)
-    try {
-      const next = await createRun({ scenario, mode: 'snapshot' })
-      setSelectedStageId(next.stages[0]?.id ?? '')
-      setSelectedTarget(next.targets.find((target) => target.symbol === 'TYK2')?.symbol ?? next.targets[0]?.symbol ?? '')
-      setActiveTab(scenario === 'molecule-ui-fixture' ? 'molecules' : 'overview')
-    } finally {
-      setIsCreating(false)
-    }
   }
 
   const openMoleculeFixture = async () => {
@@ -210,7 +234,7 @@ function App() {
     if (activeTab === 'skills') return <SkillsView />
     if (activeTab === 'agent-harness') return <AgentHarnessView />
     if (activeTab === 'roles') return <RolesView />
-    if (activeTab === 'analysis-request') return <AnalysisRequestView isCreating={isCreating} onStartRun={(scenario) => { void handleStartFromRequest(scenario) }} />
+    if (activeTab === 'analysis-request') return <AnalysisRequestView isConnected={isConnected} isCreating={isCreating} scenarioOptions={scenarioOptions} startError={startError} onStartRun={(option) => { void startScenario(option) }} />
     if (!snapshot) return null
     if (activeTab === 'evidence-search') return <EvidenceSearchView evidence={snapshot.evidence} />
     if (activeTab === 'recommendations') return <RecommendationsView snapshot={snapshot} />
@@ -257,7 +281,6 @@ function App() {
   const isSystemView = activeTab === 'organization' || activeTab === 'skills' || opsTabs.includes(activeTab)
   const systemViewLabel = systemViewLabels[activeTab] ?? 'AI 조직도'
   const systemGroupLabel = opsTabs.includes(activeTab) ? 'AI·자동화 관리' : 'AI 운영'
-  const selectedScenarioOption = scenarioOptions.find((option) => option.id === selectedScenario) ?? scenarioOptions[0]
   const contextBanner = run.classification === 'synthetic'
     ? { title: '합성 UI fixture', detail: '연구 결과가 아니며 화면 동작 확인에만 사용합니다.' }
     : run.classification === 'computed'
@@ -410,12 +433,14 @@ function App() {
               <div><h2 id="start-title">새 실행 시작</h2></div>
               <button className="icon-button" type="button" onClick={() => setIsModalOpen(false)} aria-label="닫기"><X size={18} /></button>
             </div>
-            <p className="modal-intro" id="start-description">현재 프로토타입에서 검증할 고정 시나리오를 선택하세요. 자유 입력은 실제 정규화 API가 연결된 뒤 활성화합니다.</p>
+            <p className="modal-intro" id="start-description">{isConnected
+              ? '하네스 시나리오는 파이썬 결정 코어가 규칙을 실행해 판정을 계산합니다. 픽스처 시나리오는 화면 동작만 확인합니다.'
+              : '하네스(:8765)가 꺼져 있어 픽스처 시나리오만 제시합니다. 서버를 켜면 규칙을 실제로 실행하는 시나리오가 추가됩니다.'}</p>
             <fieldset className="scenario-fieldset">
               <legend>실행 시나리오</legend>
-              {scenarioOptions.map((option) => (
+              {visibleScenarios.map((option) => (
                 <button aria-pressed={selectedScenario === option.id} className={selectedScenario === option.id ? 'is-selected' : ''} key={option.id} type="button" onClick={() => setSelectedScenario(option.id)}>
-                  {option.id === 'evidence-review' ? <FileSearch size={19} /> : <Beaker size={19} />}
+                  {option.harnessScenarioId ? <Activity size={19} /> : option.id === 'evidence-review' ? <FileSearch size={19} /> : <Beaker size={19} />}
                   <div><strong>{option.title}{option.recommended && <small>권장</small>}</strong><span>{option.description}</span></div>
                   {selectedScenario === option.id && <CheckCircle2 size={18} />}
                 </button>
@@ -423,11 +448,12 @@ function App() {
             </fieldset>
             <fieldset className="mode-fieldset">
               <legend>연결 방식</legend>
-              <button className="is-selected" type="button"><Database size={18} /><div><strong>Mock snapshot adapter</strong><span>고정 데이터와 실행 상태 전환을 재현합니다.</span></div><CheckCircle2 size={18} /></button>
-              <button type="button" disabled><Activity size={18} /><div><strong>실제 하네스 API</strong><span>백엔드 계약 구현 후 활성화됩니다.</span></div></button>
+              <button aria-pressed={activeMode === 'snapshot'} className={activeMode === 'snapshot' ? 'is-selected' : ''} type="button" onClick={() => setConnectionMode('snapshot')}><Database size={18} /><div><strong>Mock snapshot adapter</strong><span>브라우저 안 고정 데이터로 화면 동작만 확인합니다.</span></div>{activeMode === 'snapshot' && <CheckCircle2 size={18} />}</button>
+              <button aria-pressed={activeMode === 'live'} className={activeMode === 'live' ? 'is-selected' : ''} disabled={!hasLiveScenarios} type="button" onClick={() => setConnectionMode('live')}><Activity size={18} /><div><strong>실제 하네스 API</strong><span>{hasLiveScenarios ? '파이썬 결정 코어가 규칙을 실행해 판정을 계산합니다.' : '하네스(:8765)에 닿지 않아 고를 수 없습니다.'}</span></div>{activeMode === 'live' && <CheckCircle2 size={18} />}</button>
             </fieldset>
-            <div className={`modal-scope scope-${selectedScenarioOption.classification}`}><span>실행 범위</span><p>{selectedScenarioOption.description}</p></div>
-            <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setIsModalOpen(false)}>취소</button><button className="primary-button" type="button" onClick={() => { void handleCreate() }} disabled={isCreating}><Play size={16} /> {isCreating ? '시작 중' : '실행 시작'}</button></div>
+            {selectedScenarioOption && <div className={`modal-scope scope-${selectedScenarioOption.classification}`}><span>실행 범위</span><p>{selectedScenarioOption.description}</p></div>}
+            {startError && <div className="modal-scope scope-synthetic" role="alert"><span>실행 실패</span><p>{startError}</p></div>}
+            <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setIsModalOpen(false)}>취소</button><button className="primary-button" type="button" onClick={() => { void handleCreate() }} disabled={isCreating || !selectedScenarioOption}><Play size={16} /> {isCreating ? '시작 중' : '실행 시작'}</button></div>
           </section>
         </div>
       )}

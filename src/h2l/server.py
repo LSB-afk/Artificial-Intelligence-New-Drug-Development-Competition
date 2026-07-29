@@ -181,6 +181,61 @@ def _workspace_run_view(run_id: str) -> tuple[int, str, str]:
     return _json_response(404, {"error": "not_found", "message": f"Run not found: {run_id}", "details": {"run_id": run_id}})
 
 
+SANDBOX_NOTICE = {
+    "id": "HARNESS-SANDBOX",
+    "level": "warning",
+    "title": "저장되지 않는 임시 실행",
+    "detail": (
+        "이 실행의 근거 패킷은 승인 스냅샷이 아니며 서버에 저장되지 않았습니다. "
+        "승인 이력이 없으므로 어떤 판정이 나오든 분자 단계는 열리지 않습니다."
+    ),
+}
+
+
+def _workspace_create_view(body) -> tuple[int, str, str]:
+    """Run one *preset* scenario and project it as a RunSnapshot.
+
+    The console's "새 실행" needs the same shape ``GET /api/workspace/runs`` returns,
+    which ``/api/agent/sandbox`` does not give it — that route answers with an agent
+    trace. Rather than teach the browser to map a trace onto the snapshot contract,
+    this reuses the projection the read routes already use.
+
+    Presets only, deliberately. ``run_snapshot`` reads packet fields that
+    ``validate_packet`` does not type-check, and it renders ``source_ref`` and
+    ``hypothesis_id`` straight into the console and the downloadable report — so a
+    caller-supplied packet here would let unreviewed input wear registry
+    provenance. ``/api/agent/sandbox`` already accepts ad-hoc packets and returns a
+    trace that carries none of that, which is the right surface for it.
+
+    Nothing is persisted: the preset is served by the same non-storing adapter as
+    ``/api/agent/sandbox``, so a run cannot enter the approved set and
+    ``molecule_eligible`` stays false even on ADVANCE. The run id is derived from
+    the packet's content hash, so replaying the same preset is idempotent.
+    """
+    if not isinstance(body, dict):
+        return _json_response(
+            400, {"error": "invalid_body", "message": "요청 본문은 JSON 객체여야 합니다.", "details": {}}
+        )
+
+    scenario_id = body.get("scenario")
+    preset = next((item for item in scenario_catalog() if item["id"] == scenario_id), None)
+    if preset is None:
+        return _json_response(
+            404,
+            {
+                "error": "unknown_scenario",
+                "message": f"알 수 없는 시나리오입니다: {scenario_id}",
+                "details": {"scenario": scenario_id},
+            },
+        )
+
+    packet = validate_packet(preset["packet"])
+    decision = sandbox_tools(packet).decision(packet["hypothesis_id"])
+    snapshot = run_snapshot(decision, sandbox=True)
+    snapshot["safetyNotices"] = [SANDBOX_NOTICE, *snapshot["safetyNotices"]]
+    return _ok(snapshot)
+
+
 def _models_view() -> dict:
     """What the console may offer in its model picker."""
     config = LLMConfig.from_env()
@@ -330,12 +385,14 @@ def route(method: str, path: str, body=None) -> tuple[int, str, str]:
             return _method_not_allowed()
         return _serve_static(clean[len("/static/"):])
 
-    # The one scientific route that reads a request body. It computes over the
-    # submitted packet and writes nothing, so the read-only invariant holds.
+    # The two scientific routes that read a request body. Both compute over the
+    # submitted packet and write nothing, so the read-only invariant holds.
     if clean == "/api/agent/sandbox":
         if method != "POST":
             return _method_not_allowed()
         return _agent_sandbox_view(body)
+    if clean == "/api/workspace/runs" and method == "POST":
+        return _workspace_create_view(body)
 
     if method != "GET":
         return _method_not_allowed()

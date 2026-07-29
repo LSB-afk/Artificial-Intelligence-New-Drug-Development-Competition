@@ -76,9 +76,88 @@ def test_unknown_run_is_a_404():
     assert payload["error"] == "not_found"
 
 
-def test_workspace_is_read_only():
-    status, _, _ = route("POST", "/api/workspace/runs", {"decision": "ADVANCE"})
-    assert status == 405
+def test_creating_a_run_stores_nothing():
+    """POST computes over a packet; the approved set and the list must not move.
+
+    This is what makes the console's "새 실행" safe to expose. The route runs the
+    rules over an unapproved packet, so the answer is real, but nothing about it
+    survives the request.
+    """
+    _, before = _get("/api/workspace/runs")
+    status, _, body = route("POST", "/api/workspace/runs", {"scenario": "failed-trial"})
+    assert status == 200
+    _, after = _get("/api/workspace/runs")
+    assert before == after
+
+    snapshot = json.loads(body)
+    assert snapshot["run"]["id"].startswith("SANDBOX-")
+    # Unapproved evidence can never open the molecule stage, whatever the verdict.
+    assert snapshot["molecules"] == []
+    assert "HARNESS-SANDBOX" in {notice["id"] for notice in snapshot["safetyNotices"]}
+
+
+def test_creating_a_run_takes_presets_and_nothing_else():
+    """Ad-hoc packets belong on /api/agent/sandbox, not here.
+
+    ``run_snapshot`` renders ``source_ref`` and ``hypothesis_id`` into the console
+    and into the downloadable report, and ``validate_packet`` does not type-check
+    the fields it reads. So this route accepts only server-authored presets; a
+    caller-supplied packet would let unreviewed input wear registry provenance.
+    """
+    assert route("POST", "/api/workspace/runs", {"scenario": "nope"})[0] == 404
+    assert route("POST", "/api/workspace/runs", {"packet": {"hypothesis_id": "IBD:TYK2"}})[0] == 404
+    assert route("POST", "/api/workspace/runs", "not-an-object")[0] == 400
+    assert route("DELETE", "/api/workspace/runs")[0] == 405
+
+
+def test_a_sandbox_run_never_wears_registry_provenance():
+    """The projection's default strings assert approved-snapshot origin. A run
+    computed from an unapproved packet must not inherit them — including in the
+    report artifact, which leaves the console on its own."""
+    snapshot = json.loads(route("POST", "/api/workspace/runs", {"scenario": "in-indication-support"})[2])
+    assert snapshot["run"]["id"].startswith("SANDBOX-")
+    assert "승인된 스냅샷" not in snapshot["stages"][0]["summary"]
+    assert snapshot["stages"][0]["toolCall"]["classification"] == "synthetic"
+    assert {item["classification"] for item in snapshot["evidence"]} == {"synthetic"}
+
+    packet_artifact = next(a for a in snapshot["artifacts"] if a["id"] == "evidence-packet")
+    assert packet_artifact["classification"] == "synthetic"
+    report = next(a for a in snapshot["artifacts"] if a["id"] == "decision-report")["content"]
+    assert "Provenance: SANDBOX" in report
+    assert "Run: SANDBOX-" in report
+
+
+def test_approved_runs_keep_their_provenance():
+    """The sandbox flag must not leak into the registry-backed projection."""
+    snapshot = json.loads(route("GET", "/api/workspace/runs/RUN-IBD-TYK2-f7fde634")[2])
+    assert snapshot["stages"][0]["summary"].startswith("승인된 스냅샷")
+    assert snapshot["stages"][0]["toolCall"]["classification"] == "source_snapshot"
+    assert {item["classification"] for item in snapshot["evidence"]} == {"source_snapshot"}
+    report = next(a for a in snapshot["artifacts"] if a["id"] == "decision-report")["content"]
+    assert "SANDBOX" not in report
+
+
+def test_created_runs_are_reproducible():
+    """Same packet, same run: the id is derived from content, not a counter."""
+    first = route("POST", "/api/workspace/runs", {"scenario": "cross-indication"})[2]
+    second = route("POST", "/api/workspace/runs", {"scenario": "cross-indication"})[2]
+    assert first == second
+
+
+def test_every_preset_reaches_the_console_contract():
+    """Each preset isolates one rule path, so the four must not collapse to one verdict."""
+    _, catalog = _get("/api/scenarios")
+    verdicts = {}
+    for preset in catalog["scenarios"]:
+        status, _, body = route("POST", "/api/workspace/runs", {"scenario": preset["id"]})
+        assert status == 200, preset["id"]
+        verdicts[preset["id"]] = json.loads(body)["targets"][0]["decision"]
+    assert verdicts == {
+        "in-indication-support": "review",
+        "failed-trial": "rejected",
+        "cross-indication": "insufficient",
+        "context-only": "insufficient",
+    }
 
 
 def test_projection_is_byte_reproducible():

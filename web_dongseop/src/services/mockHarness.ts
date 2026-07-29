@@ -1,4 +1,4 @@
-import { initialSnapshots } from '../data/demoScenarios'
+import { initialSnapshots, scenarioOptions } from '../data/demoScenarios'
 import type {
   CreateRunInput,
   ExplainInput,
@@ -6,6 +6,7 @@ import type {
   HarnessClient,
   RunSnapshot,
   RunSummary,
+  ScenarioOption,
   StageStatus,
 } from '../domain/contracts'
 import { validateSnapshot } from '../domain/validateSnapshot'
@@ -36,6 +37,10 @@ export class MockHarnessClient implements HarnessClient {
     return [...this.snapshots.values()]
       .map((snapshot) => clone(snapshot.run))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  }
+
+  async listScenarios(): Promise<ScenarioOption[]> {
+    return clone(scenarioOptions)
   }
 
   async getRun(runId: string): Promise<RunSnapshot> {

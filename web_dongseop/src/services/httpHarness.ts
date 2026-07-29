@@ -1,10 +1,12 @@
 import type {
   CreateRunInput,
+  DataClassification,
   ExplainInput,
   Explanation,
   HarnessClient,
   RunSnapshot,
   RunSummary,
+  ScenarioOption,
 } from '../domain/contracts'
 import { validateSnapshot } from '../domain/validateSnapshot'
 
@@ -26,12 +28,21 @@ import { validateSnapshot } from '../domain/validateSnapshot'
 
 const REQUEST_TIMEOUT_MS = 8_000
 
-async function getJson<T>(path: string): Promise<T | null> {
+/** 하네스가 준 실패 사유. 없으면 null이고, 그때만 호출부가 문장을 지어냅니다. */
+let lastErrorMessage: string | null = null
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T | null> {
   const controller = new AbortController()
   const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  lastErrorMessage = null
   try {
-    const response = await fetch(path, { signal: controller.signal })
-    if (!response.ok) return null
+    const response = await fetch(path, { ...init, signal: controller.signal })
+    if (!response.ok) {
+      // 서버는 어떤 필드가 왜 거부됐는지 이미 적어 보냅니다. 그걸 버리면 사용자는 고칠 수 없습니다.
+      const body = await response.json().catch(() => null)
+      lastErrorMessage = typeof body?.message === 'string' ? body.message : null
+      return null
+    }
     return (await response.json()) as T
   } catch {
     return null
@@ -40,10 +51,27 @@ async function getJson<T>(path: string): Promise<T | null> {
   }
 }
 
+/** 하네스 프리셋 하나를 모달이 그릴 수 있는 선택지로 옮깁니다. */
+function toScenarioOption(preset: { id: string; label: string; expectation: string; note: string }): ScenarioOption {
+  return {
+    id: preset.id,
+    title: preset.label,
+    // 어떤 판정이 나올지를 먼저 보여야 규칙이 실행됐다는 게 확인 가능합니다.
+    description: `${preset.expectation} — ${preset.note}`,
+    classification: 'computed' as DataClassification,
+    harnessScenarioId: preset.id,
+  }
+}
+
 export class HttpHarnessClient implements HarnessClient {
   /** 마지막 목록 조회에서 하네스가 소유권을 주장한 실행 id. */
   private harnessIds = new Set<string>()
   private readonly cache = new Map<string, RunSnapshot>()
+  /**
+   * 시나리오를 눌러 만든 실행. 서버가 저장하지 않으므로 목록 조회로는 다시
+   * 찾을 수 없고, 따라서 `listRuns`가 캐시를 비울 때 함께 지워지면 안 됩니다.
+   */
+  private readonly sandboxRuns = new Map<string, RunSnapshot>()
   private harnessReachable = false
 
   constructor(private readonly fallback: HarnessClient) {}
@@ -53,24 +81,35 @@ export class HttpHarnessClient implements HarnessClient {
     return this.harnessReachable
   }
 
+  /**
+   * 이 실행을 픽스처 어댑터가 아니라 하네스가 만들었는지. `getRun`은 두 출처를
+   * 서로 다르게 읽어야 해서 직접 분기하고, 나머지는 전부 여기를 지납니다.
+   */
+  private isHarnessOwned(runId: string) {
+    return this.harnessIds.has(runId) || this.sandboxRuns.has(runId)
+  }
+
   async listRuns(): Promise<RunSummary[]> {
-    const payload = await getJson<{ runs: RunSummary[] }>('/api/workspace/runs')
+    const payload = await requestJson<{ runs: RunSummary[] }>('/api/workspace/runs')
     const harnessSummaries = payload?.runs ?? []
     this.harnessReachable = Array.isArray(payload?.runs)
     this.harnessIds = new Set(harnessSummaries.map((run) => run.id))
     this.cache.clear()
     const fixtures = await this.fallback.listRuns()
-    return [...harnessSummaries, ...fixtures]
+    const sandbox = [...this.sandboxRuns.values()].map((snapshot) => structuredClone(snapshot.run))
+    return [...sandbox, ...harnessSummaries, ...fixtures]
   }
 
   async getRun(runId: string): Promise<RunSnapshot> {
+    const sandboxed = this.sandboxRuns.get(runId)
+    if (sandboxed) return structuredClone(sandboxed)
     // 픽스처 실행까지 백엔드에 물어보지 않습니다. 소유자가 누구인지는 목록에서 이미 정해졌습니다.
     if (!this.harnessIds.has(runId)) return this.fallback.getRun(runId)
 
     const cached = this.cache.get(runId)
     if (cached) return structuredClone(cached)
 
-    const snapshot = await getJson<RunSnapshot>(`/api/workspace/runs/${encodeURIComponent(runId)}`)
+    const snapshot = await requestJson<RunSnapshot>(`/api/workspace/runs/${encodeURIComponent(runId)}`)
     if (snapshot?.run?.id !== runId) {
       throw new Error(`하네스가 실행을 돌려주지 않았습니다: ${runId}`)
     }
@@ -81,22 +120,45 @@ export class HttpHarnessClient implements HarnessClient {
     return structuredClone(valid)
   }
 
-  createRun(input: CreateRunInput): Promise<RunSnapshot> {
-    return this.fallback.createRun(input)
+  async listScenarios(): Promise<ScenarioOption[]> {
+    const payload = await requestJson<{ scenarios: Parameters<typeof toScenarioOption>[0][] }>('/api/scenarios')
+    const presets = (payload?.scenarios ?? []).map(toScenarioOption)
+    const fixtures = await this.fallback.listScenarios()
+    // 계산되는 시나리오를 먼저 놓고, 첫 항목을 권장으로 표시합니다. 하네스가
+    // 꺼져 있으면 픽스처가 그 자리를 가져가므로 모달은 늘 뭔가를 제시합니다.
+    const options = [...presets, ...fixtures].map((option) => ({ ...option, recommended: false }))
+    if (options[0]) options[0] = { ...options[0], recommended: true }
+    return options
+  }
+
+  async createRun(input: CreateRunInput): Promise<RunSnapshot> {
+    if (!input.harnessScenarioId) return this.fallback.createRun(input)
+
+    const snapshot = await requestJson<RunSnapshot>('/api/workspace/runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenario: input.harnessScenarioId }),
+    })
+    if (!snapshot?.run?.id) {
+      throw new Error(lastErrorMessage ?? `하네스가 시나리오를 실행하지 못했습니다: ${input.harnessScenarioId}`)
+    }
+    const valid = validateSnapshot(snapshot)
+    this.sandboxRuns.set(valid.run.id, valid)
+    return structuredClone(valid)
   }
 
   async cancelRun(runId: string): Promise<RunSnapshot> {
     // 계산된 실행은 이미 끝난 결정론적 재생이라 취소할 진행 상태가 없습니다.
-    if (this.harnessIds.has(runId)) return this.getRun(runId)
+    if (this.isHarnessOwned(runId)) return this.getRun(runId)
     return this.fallback.cancelRun(runId)
   }
 
   async markReviewed(runId: string): Promise<RunSnapshot> {
-    if (!this.harnessIds.has(runId)) return this.fallback.markReviewed(runId)
+    if (!this.isHarnessOwned(runId)) return this.fallback.markReviewed(runId)
     // 과학 plane은 읽기 전용입니다. 검토 표시는 이 브라우저 세션에만 남습니다.
     const current = await this.getRun(runId)
     const reviewed: RunSnapshot = { ...current, run: { ...current.run, reviewStatus: 'approved' } }
-    this.cache.set(runId, reviewed)
+    ;(this.sandboxRuns.has(runId) ? this.sandboxRuns : this.cache).set(runId, reviewed)
     return structuredClone(reviewed)
   }
 
@@ -106,7 +168,7 @@ export class HttpHarnessClient implements HarnessClient {
 
   subscribe(runId: string, listener: (snapshot: RunSnapshot) => void): () => void {
     // 계산된 실행은 결정론적이고 즉시 끝나므로 구독할 진행 상태가 없습니다.
-    if (this.harnessIds.has(runId)) return () => {}
+    if (this.isHarnessOwned(runId)) return () => {}
     return this.fallback.subscribe(runId, listener)
   }
 }

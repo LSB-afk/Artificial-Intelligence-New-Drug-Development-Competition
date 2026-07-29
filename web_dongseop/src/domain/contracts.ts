@@ -201,16 +201,24 @@ export interface RunSnapshot {
 }
 
 export interface ScenarioOption {
-  id: ScenarioKind
+  /** 픽스처는 `ScenarioKind`, 하네스 프리셋은 `/api/scenarios`가 준 preset id입니다. */
+  id: string
   title: string
   description: string
   classification: DataClassification
   recommended?: boolean
+  /**
+   * 값이 있으면 파이썬 결정 코어가 규칙을 실행합니다. 없으면 브라우저 안의
+   * 고정 픽스처를 복제할 뿐입니다. 모달의 "연결 방식"은 이 필드에서 파생됩니다.
+   */
+  harnessScenarioId?: string
 }
 
 export interface CreateRunInput {
   scenario: ScenarioKind
   mode: DataMode
+  /** 있으면 하네스에 계산을 요청합니다. 없으면 픽스처 복제입니다. */
+  harnessScenarioId?: string
 }
 
 /**
@@ -242,6 +250,8 @@ export interface ExplainInput {
 
 export interface HarnessClient {
   listRuns(): Promise<RunSummary[]>
+  /** 모달이 제시할 시나리오. 하네스가 닿으면 프리셋이 앞에 붙습니다. */
+  listScenarios(): Promise<ScenarioOption[]>
   getRun(runId: string): Promise<RunSnapshot>
   createRun(input: CreateRunInput): Promise<RunSnapshot>
   cancelRun(runId: string): Promise<RunSnapshot>

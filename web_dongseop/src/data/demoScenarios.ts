@@ -2,18 +2,23 @@ import type {
   EvidenceSource,
   MoleculeSnapshot,
   RunSnapshot,
+  ScenarioKind,
   ScenarioOption,
   StageSnapshot,
   TargetSnapshot,
 } from '../domain/contracts'
 
-export const scenarioOptions: ScenarioOption[] = [
+/**
+ * 픽스처 선택지. `id`는 반드시 `ScenarioKind`여야 하고, 그래야 `MockHarnessClient`가
+ * 같은 이름의 스냅샷을 찾습니다. `ScenarioOption.id`는 하네스 프리셋 id까지 담느라
+ * `string`으로 넓어졌으므로 그 제약을 여기서 컴파일 타임에 붙잡아 둡니다.
+ */
+export const scenarioOptions: Array<ScenarioOption & { id: ScenarioKind }> = [
   {
     id: 'evidence-review',
     title: 'IBD 근거 검토',
     description: '출처 스냅샷을 사용해 TYK2 판단과 단계 중단을 재현합니다.',
     classification: 'source_snapshot',
-    recommended: true,
   },
   {
     id: 'molecule-ui-fixture',
