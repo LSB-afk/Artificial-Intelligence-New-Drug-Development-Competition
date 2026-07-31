@@ -154,6 +154,10 @@ try {
   })
 
   await page.goto(baseUrl, { waitUntil: 'networkidle' })
+  // `networkidle`은 요청이 멎었다는 뜻이지 React가 렌더를 끝냈다는 뜻이 아닙니다.
+  // 아직 `.app-loading`일 때 셀렉터를 읽으면 전부 빈 값이라 단정이 헛돕니다.
+  await page.locator('.app-loading').waitFor({ state: 'detached' }).catch(() => {})
+  await page.locator('.prototype-note strong').waitFor()
 
   // ---- 1. 연결됨을 콘솔이 스스로 말하는가 --------------------------------
   const connected = await page.evaluate(() => ({

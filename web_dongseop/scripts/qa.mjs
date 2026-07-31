@@ -33,6 +33,19 @@ async function observePage(page, errors) {
   })
 }
 
+/**
+ * 콘솔이 실제로 그려질 때까지 기다립니다.
+ *
+ * `networkidle`은 요청이 멎었다는 뜻이지 React가 렌더를 끝냈다는 뜻이 아닙니다.
+ * 첫 방문이면 개발 서버가 모듈을 변환하는 동안 앱은 `.app-loading`에 머물고,
+ * 그때 셀렉터를 읽으면 빈 문자열이 나옵니다. 개발 기계에서는 늘 렌더가 먼저
+ * 끝나 드러나지 않다가, 느린 러너에서 터집니다.
+ */
+async function waitForConsole(page) {
+  await page.locator('.app-loading').waitFor({ state: 'detached' }).catch(() => {})
+  await page.locator('.prototype-note strong').waitFor()
+}
+
 await mkdir(artifactDir, { recursive: true })
 const browser = await chromium.launch({ headless: true, executablePath: chromePath })
 const errors = []
@@ -43,6 +56,7 @@ try {
   const desktop = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
   await observePage(desktop, errors)
   await desktop.goto(baseUrl, { waitUntil: 'networkidle' })
+  await waitForConsole(desktop)
 
   // 하네스가 없으면 계산된 실행은 목록에 없어야 하고, 콘솔은 픽스처로 열려야 합니다.
   const offlineState = await desktop.evaluate(() => ({
@@ -284,6 +298,7 @@ try {
   const compactDesktop = await browser.newPage({ viewport: { width: 1100, height: 900 }, deviceScaleFactor: 1 })
   await observePage(compactDesktop, errors)
   await compactDesktop.goto(baseUrl, { waitUntil: 'networkidle' })
+  await waitForConsole(compactDesktop)
   await compactDesktop.getByRole('heading', { name: 'IBD 타깃 근거 검토' }).waitFor()
   const compactLayout = await compactDesktop.evaluate(() => {
     const decision = document.querySelector('.decision-panel').getBoundingClientRect()
@@ -303,6 +318,7 @@ try {
   const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 })
   await observePage(mobile, errors)
   await mobile.goto(baseUrl, { waitUntil: 'networkidle' })
+  await waitForConsole(mobile)
   await mobile.getByRole('heading', { name: 'IBD 타깃 근거 검토' }).waitFor()
   const decisionBox = await mobile.locator('.decision-panel').boundingBox()
   const stageBox = await mobile.locator('.stage-panel').boundingBox()
