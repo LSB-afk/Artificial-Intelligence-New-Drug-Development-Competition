@@ -3,7 +3,8 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 
 const baseUrl = process.env.QA_URL ?? 'http://127.0.0.1:4173/'
-const chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+// 러너마다 크롬 위치가 다릅니다. 기본값은 로컬 macOS 설치 경로입니다.
+const chromePath = process.env.QA_CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const artifactDir = new URL('../artifacts/', import.meta.url)
 
 const artifactPath = (name) => fileURLToPath(new URL(name, artifactDir))

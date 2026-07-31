@@ -1,0 +1,122 @@
+# PR마다 검증을 실제로 돌립니다.
+#
+# 지금까지 "pytest 통과", "QA 게이트 통과"는 PR 본문에 적힌 문장일 뿐이었고
+# 리뷰어가 확인할 방법이 없었습니다. 이 저장소의 PR은 대회 제출물의 감사 기록으로
+# 쓰이므로, 검증 주장은 재현 가능해야 합니다.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# 같은 브랜치에 연달아 푸시하면 앞의 실행 결과는 의미가 없습니다.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  harness:
+    name: 하네스 (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # 코어는 표준 라이브러리만 씁니다. RDKit은 선택 의존성이고 없으면
+      # tests/test_chem.py가 깨끗이 skip하는데, skip은 통과가 아닙니다.
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-chem.txt pytest
+
+      # 설치가 조용히 실패하면 화학 테스트는 skip으로 초록불이 되고, 화학 백엔드는
+      # 검증되지 않은 채 통과합니다. 먼저 붙었는지부터 확인합니다.
+      - name: RDKit이 실제로 설치됐는지 확인
+        run: python -c "import rdkit; print('rdkit', rdkit.__version__)"
+
+      - name: pytest
+        run: PYTHONPATH=src python -m pytest tests
+
+  console:
+    name: 콘솔 (빌드 + QA 게이트 2종)
+    # 두 게이트 모두 실제 Chrome을 씁니다. macOS 러너에 이미 설치돼 있고,
+    # public 저장소라 무료입니다.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web_dongseop/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # 러너 이미지가 Chrome을 어디에 두는지에 기대지 않고 직접 찾습니다. 못 찾으면
+      # 여기서 멈춰야 합니다. 아래 게이트가 브라우저 없이 실패하면 원인이 가려집니다.
+      - name: Chrome 위치 확인
+        run: |
+          for candidate in \
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+            "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" \
+            "$(command -v google-chrome || true)"; do
+            if [ -x "$candidate" ]; then
+              echo "QA_CHROME=$candidate" >> "$GITHUB_ENV"
+              echo "찾음: $candidate"
+              exit 0
+            fi
+          done
+          echo "::error::러너에서 Chrome을 찾지 못했습니다. QA 게이트를 돌릴 수 없습니다."
+          exit 1
+
+      - run: npm ci
+        working-directory: web_dongseop
+
+      # `npm run lint`와 같은 `tsc -b`를 포함하므로 빌드 하나로 타입 검사까지 됩니다.
+      - name: 빌드 (tsc -b + vite build)
+        run: npm run build
+        working-directory: web_dongseop
+
+      # 두 게이트 모두 개발 서버의 /api 프록시를 지납니다. preview는 프록시를
+      # 설정하지 않으므로 dev를 띄웁니다.
+      - name: 개발 서버 기동
+        working-directory: web_dongseop
+        run: |
+          nohup npm run dev > /tmp/vite.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:4173/ >/dev/null; then
+              echo "vite 준비됨"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::vite 개발 서버가 :4173에서 응답하지 않습니다."
+          cat /tmp/vite.log
+          exit 1
+
+      # 순서가 중요합니다. `qa`는 :8765가 꺼져 있어야 오프라인 폴백을 검증할 수
+      # 있고, `qa:online`은 하네스를 직접 켰다 끕니다. 하네스 실행에 필요한
+      # PYTHONPATH는 스크립트가 저장소 루트 기준으로 직접 설정합니다.
+      - name: QA 게이트 — 하네스 오프라인
+        run: npm run qa
+        working-directory: web_dongseop
+
+      - name: QA 게이트 — 하네스 연결
+        run: npm run qa:online
+        working-directory: web_dongseop
+
+      - name: 개발 서버 로그
+        if: failure()
+        run: cat /tmp/vite.log
+
+      - name: QA 산출물 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-artifacts
+          path: web_dongseop/artifacts/
+          retention-days: 14
+          if-no-files-found: warn
