@@ -41,12 +41,23 @@ export function validateSnapshot(snapshot: RunSnapshot) {
   if (snapshot.run.scenarioKind === 'harness-decision') {
     invariant(snapshot.run.classification === 'computed', `${snapshot.run.id}는 하네스 계산 결과인데 분류가 computed가 아닙니다.`)
     invariant(snapshot.molecules.length === 0, `${snapshot.run.id} 판정 실행에 분자 결과가 포함되어 있습니다.`)
-    invariant(snapshot.targets.length > 0, `${snapshot.run.id} 판정 실행에 타깃이 없습니다.`)
-    const gatedStages = ['seed', 'generate', 'activity', 'admet', 'synthesis']
-    invariant(gatedStages.every((id) => {
-      const status = snapshot.stages.find((stage) => stage.id === id)?.status
-      return status === 'skipped' || status === 'blocked'
-    }), `${snapshot.run.id}의 분자 단계가 결정 게이트 이후 미실행 상태가 아닙니다.`)
+    if (hasFinalOutputs) invariant(snapshot.targets.length > 0, `${snapshot.run.id} 판정 실행에 타깃이 없습니다.`)
+
+    // 승인된 정적 실행은 예전 파이프라인 stage를, 새 Agent 실행은 실제 action
+    // stage를 사용합니다. 어느 쪽이든 최종 스냅샷에서 분자 실행이 성공한 것처럼
+    // 보이면 안 됩니다. 진행 중에는 queued/running 상태를 정상으로 허용합니다.
+    if (hasFinalOutputs) {
+      const moleculeAction = snapshot.stages.find((stage) => stage.id === 'optimize_molecules')
+      if (moleculeAction) {
+        invariant(moleculeAction.status === 'blocked' || moleculeAction.status === 'skipped', `${snapshot.run.id}의 분자 최적화 요청이 게이트에서 차단되지 않았습니다.`)
+      } else {
+        const gatedStages = ['seed', 'generate', 'activity', 'admet', 'synthesis']
+        invariant(gatedStages.every((id) => {
+          const status = snapshot.stages.find((stage) => stage.id === id)?.status
+          return status === 'skipped' || status === 'blocked'
+        }), `${snapshot.run.id}의 분자 단계가 결정 게이트 이후 미실행 상태가 아닙니다.`)
+      }
+    }
   }
 
   if (snapshot.run.scenarioKind === 'molecule-ui-fixture' && hasFinalOutputs) {

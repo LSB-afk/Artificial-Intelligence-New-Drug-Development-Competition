@@ -25,6 +25,7 @@ from h2l import RULESET_VERSION
 from h2l.agent import DEFAULT_MAX_STEPS, HarnessTools, action_catalog, run_agent
 from h2l.console_store import ConsoleError, HadesConsoleStore
 from h2l.eval_runner import load_cases, run_evaluation
+from h2l.live_runs import LiveRunCapacity, LiveRunManager, LiveRunNotFound
 from h2l.llm import LLMConfig, explain_decision, list_models, resolve_model
 from h2l.registry import SnapshotRegistry
 from h2l.replay import ClinicalContradictionCritic, DrugDiscoveryHarness, SnapshotEvidenceAdapter
@@ -42,6 +43,7 @@ MAX_JSON_BODY = 1024 * 1024
 STATIC_TYPES = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".html": "text/html; charset=utf-8"}
 _STATE: dict = {}
 _CONSOLE_STORE: HadesConsoleStore | None = None
+_LIVE_RUN_MANAGER: LiveRunManager | None = None
 
 
 # ---- demo state (built once, in memory) --------------------------------
@@ -170,10 +172,19 @@ def _workspace_snapshots() -> list[dict]:
 
 
 def _workspace_runs_view() -> dict:
-    return {"runs": [snapshot["run"] for snapshot in _workspace_snapshots()]}
+    # Live runs are volatile operational state, not approved scientific state.
+    # They are listed so a browser refresh can reconnect to an in-flight run;
+    # restarting the server clears them without touching the registry.
+    live = _live_run_manager().summaries()
+    approved = [snapshot["run"] for snapshot in _workspace_snapshots()]
+    return {"runs": [*live, *approved]}
 
 
 def _workspace_run_view(run_id: str) -> tuple[int, str, str]:
+    try:
+        return _ok(_live_run_manager().get(run_id))
+    except LiveRunNotFound:
+        pass
     for item in _hypotheses():
         snapshot = run_snapshot(_decide(item["hypothesis_id"]))
         if snapshot["run"]["id"] == run_id:
@@ -193,12 +204,12 @@ SANDBOX_NOTICE = {
 
 
 def _workspace_create_view(body) -> tuple[int, str, str]:
-    """Run one *preset* scenario and project it as a RunSnapshot.
+    """Start one preset as a volatile, observable Agent run.
 
-    The console's "새 실행" needs the same shape ``GET /api/workspace/runs`` returns,
-    which ``/api/agent/sandbox`` does not give it — that route answers with an agent
-    trace. Rather than teach the browser to map a trace onto the snapshot contract,
-    this reuses the projection the read routes already use.
+    The first response is a queued ``RunSnapshot``. A background worker executes
+    the real allow-listed ``run_agent`` loop over a non-storing packet adapter;
+    subsequent GETs for the returned run id expose each validated action's
+    running and terminal state.
 
     Presets only, deliberately. ``run_snapshot`` reads packet fields that
     ``validate_packet`` does not type-check, and it renders ``source_ref`` and
@@ -207,10 +218,10 @@ def _workspace_create_view(body) -> tuple[int, str, str]:
     provenance. ``/api/agent/sandbox`` already accepts ad-hoc packets and returns a
     trace that carries none of that, which is the right surface for it.
 
-    Nothing is persisted: the preset is served by the same non-storing adapter as
-    ``/api/agent/sandbox``, so a run cannot enter the approved set and
-    ``molecule_eligible`` stays false even on ADVANCE. The run id is derived from
-    the packet's content hash, so replaying the same preset is idempotent.
+    Nothing enters the scientific registry. The progress record exists only in
+    process memory so the web console can reconnect or cancel it; a server restart
+    removes it. The packet remains unapproved, so ``molecule_eligible`` stays false
+    even when the deterministic decision is ADVANCE.
     """
     if not isinstance(body, dict):
         return _json_response(
@@ -230,10 +241,44 @@ def _workspace_create_view(body) -> tuple[int, str, str]:
         )
 
     packet = validate_packet(preset["packet"])
-    decision = sandbox_tools(packet).decision(packet["hypothesis_id"])
-    snapshot = run_snapshot(decision, sandbox=True)
-    snapshot["safetyNotices"] = [SANDBOX_NOTICE, *snapshot["safetyNotices"]]
-    return _ok(snapshot)
+    config = LLMConfig.from_env()
+    requested_model = body.get("model")
+    if requested_model is not None and not isinstance(requested_model, str):
+        return _json_response(
+            400, {"error": "invalid_body", "message": "'model'은 문자열이어야 합니다.", "details": {}}
+        )
+    chosen, rejection = resolve_model(requested_model, config)
+    if rejection:
+        return _json_response(400, {"error": "unknown_model", "message": rejection, "details": {"model": requested_model}})
+
+    try:
+        snapshot = _live_run_manager().create(
+            packet,
+            scenario_id=scenario_id,
+            tools=sandbox_tools(packet),
+            config=config.with_model(chosen),
+            notices=[SANDBOX_NOTICE],
+        )
+    except LiveRunCapacity as error:
+        return _json_response(
+            429,
+            {
+                "error": "live_run_capacity",
+                "message": "동시에 실행할 수 있는 임시 Agent 작업 수를 초과했습니다.",
+                "details": {"reason": str(error)},
+            },
+        )
+    return _json_response(202, snapshot)
+
+
+def _workspace_cancel_view(run_id: str) -> tuple[int, str, str]:
+    try:
+        return _ok(_live_run_manager().cancel(run_id))
+    except LiveRunNotFound:
+        return _json_response(
+            404,
+            {"error": "not_found", "message": f"Live run not found: {run_id}", "details": {"run_id": run_id}},
+        )
 
 
 def _models_view() -> dict:
@@ -355,6 +400,26 @@ def configure_console_store(path: str | os.PathLike) -> HadesConsoleStore:
     return _CONSOLE_STORE
 
 
+def configure_live_run_manager(*, step_interval_ms: int = 0) -> LiveRunManager:
+    """Replace volatile live state; tests use a zero-delay manager."""
+    global _LIVE_RUN_MANAGER
+    if _LIVE_RUN_MANAGER is not None:
+        _LIVE_RUN_MANAGER.clear()
+    _LIVE_RUN_MANAGER = LiveRunManager(step_interval_ms=step_interval_ms)
+    return _LIVE_RUN_MANAGER
+
+
+def _live_run_manager() -> LiveRunManager:
+    global _LIVE_RUN_MANAGER
+    if _LIVE_RUN_MANAGER is None:
+        try:
+            interval = max(0, int(os.environ.get("H2L_LIVE_STEP_INTERVAL_MS", "550")))
+        except ValueError:
+            interval = 550
+        _LIVE_RUN_MANAGER = LiveRunManager(step_interval_ms=interval)
+    return _LIVE_RUN_MANAGER
+
+
 def _console_store() -> HadesConsoleStore:
     global _CONSOLE_STORE
     if _CONSOLE_STORE is None:
@@ -385,14 +450,17 @@ def route(method: str, path: str, body=None) -> tuple[int, str, str]:
             return _method_not_allowed()
         return _serve_static(clean[len("/static/"):])
 
-    # The two scientific routes that read a request body. Both compute over the
-    # submitted packet and write nothing, so the read-only invariant holds.
+    # Agent sandbox computes without storage. Workspace creation keeps only
+    # volatile serving-plane progress; neither route mutates the registry.
     if clean == "/api/agent/sandbox":
         if method != "POST":
             return _method_not_allowed()
         return _agent_sandbox_view(body)
     if clean == "/api/workspace/runs" and method == "POST":
         return _workspace_create_view(body)
+    if clean.startswith("/api/workspace/runs/") and clean.endswith("/cancel") and method == "POST":
+        run_id = unquote(clean[len("/api/workspace/runs/"):-len("/cancel")]).rstrip("/")
+        return _workspace_cancel_view(run_id)
 
     if method != "GET":
         return _method_not_allowed()
@@ -681,6 +749,10 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\nstopping…")
         server.shutdown()
+    finally:
+        if _LIVE_RUN_MANAGER is not None:
+            _LIVE_RUN_MANAGER.clear()
+        server.server_close()
     return 0
 
 

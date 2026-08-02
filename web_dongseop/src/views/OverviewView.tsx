@@ -83,14 +83,32 @@ function RunningStageOutput({ stage, total }: { stage: StageSnapshot; total: num
 export default function OverviewView({ snapshot, selectedStageId, onSelectStage, onOpenTargets }: OverviewProps) {
   const { stages, evidence, targets, run } = snapshot
   const selectedStage = stages.find((stage) => stage.id === selectedStageId) ?? stages[0]
-  const focusTarget = targets.find((target) => target.symbol === 'TYK2')
+  const focusTarget = targets.find((target) => target.symbol === 'TYK2') ?? targets[0]
   const focusEvidence = focusTarget
     ? evidence.filter((item) => focusTarget.evidenceIds.includes(item.id))
     : evidence
   const supporting = focusEvidence.filter((item) => item.polarity === 'supporting')
   const conflicting = focusEvidence.filter((item) => item.polarity === 'conflicting')
   const processed = stages.filter((stage) => terminalStatuses.includes(stage.status)).length
-  const showDecision = Boolean(focusTarget && (selectedStage.id === 'critic' || selectedStage.id === 'decision'))
+  const showDecision = Boolean(focusTarget && ['critic', 'decision', 'critique', 'check_molecule_gate'].includes(selectedStage.id))
+  const decisionLabel = focusTarget?.decision === 'rejected'
+    ? '기각'
+    : focusTarget?.decision === 'insufficient'
+      ? '근거 부족'
+      : focusTarget?.decision === 'review'
+        ? '검토 필요'
+        : '참고 전용'
+  const decisionHeadline = focusTarget?.decision === 'review'
+    ? `${focusTarget.symbol} 판정은 사람 검토와 승인 기록이 필요합니다.`
+    : `${focusTarget?.symbol ?? '타깃'}: ${run.disease} 실행에서는 분자 최적화 대상으로 진행하지 않습니다.`
+  const decisionDetail = focusTarget?.decision === 'rejected'
+    ? '질환에 맞는 지지 근거와 반증을 분리해 운영 점수를 다시 계산했습니다.'
+    : focusTarget?.decision === 'insufficient'
+      ? '현재 근거만으로는 분자 단계 진행 여부를 확정할 수 없습니다.'
+      : '자동 판정만으로 분자 단계를 열지 않고 사람의 검토 기록을 기다립니다.'
+  const gateResult = focusTarget?.decision === 'review'
+    ? '사람 승인 기록 전에는 분자 최적화 단계를 실행하지 않습니다.'
+    : '진행 가능한 타깃이 없어 분자 최적화 단계를 실행하지 않았습니다.'
 
   return (
     <div className="workspace-grid">
@@ -128,16 +146,16 @@ export default function OverviewView({ snapshot, selectedStageId, onSelectStage,
         ) : showDecision && focusTarget ? (
           <>
             <div className="decision-summary">
-              <div className="decision-kicker"><AlertTriangle size={16} />적응증별 임상 근거가 최초 판단과 충돌</div>
-              <h3>TYK2는 이 IBD 실행의 분자 최적화 대상으로 진행하지 않습니다.</h3>
-              <p>화학적 접근 가능성과 IBD 적응증의 유효성은 별개입니다. 지지 근거와 반증을 분리해 운영 점수를 다시 계산했습니다.</p>
+              <div className="decision-kicker"><AlertTriangle size={16} />{focusTarget.caution}</div>
+              <h3>{decisionHeadline}</h3>
+              <p>{decisionDetail}</p>
             </div>
 
-            <div className="score-reversal" aria-label="TYK2 점수 변화">
+            <div className="score-reversal" aria-label={`${focusTarget.symbol} 점수 변화`}>
               <div className="score-block before"><span>비평 전 운영 점수</span><strong>{focusTarget.scoreBefore}</strong><small>연관성·tractability·활성 자료</small></div>
               <div className="score-arrow"><ArrowRight size={20} /><span>{focusTarget.scoreAfter - focusTarget.scoreBefore}</span></div>
-              <div className="score-block after"><span>근거 비평 후</span><strong>{focusTarget.scoreAfter}</strong><small>IBD 임상 반증 반영</small></div>
-              <div className="decision-stamp"><span>결정</span><strong>기각</strong></div>
+              <div className="score-block after"><span>근거 비평 후</span><strong>{focusTarget.scoreAfter}</strong><small>{run.disease} 근거 반영</small></div>
+              <div className="decision-stamp"><span>결정</span><strong>{decisionLabel}</strong></div>
             </div>
 
             <div className="score-attribution" aria-label="점수 산정 내역">
@@ -163,7 +181,7 @@ export default function OverviewView({ snapshot, selectedStageId, onSelectStage,
 
             <div className="next-action">
               <div className="next-action-icon"><ShieldOff size={18} /></div>
-              <div><span>게이트 결과</span><strong>채택 타깃이 없어 seed부터 합성 평가까지 실행하지 않았습니다.</strong></div>
+              <div><span>게이트 결과</span><strong>{gateResult}</strong></div>
               <button className="text-button" type="button" onClick={onOpenTargets}>타깃 비교 <ChevronRight size={15} /></button>
             </div>
           </>
@@ -191,7 +209,7 @@ export default function OverviewView({ snapshot, selectedStageId, onSelectStage,
         </div>
         <div className={`snapshot-notice notice-${run.classification}`}>
           <Database size={16} />
-          <div><strong>{run.classification === 'synthetic' ? '합성 UI 데이터' : '저장된 출처 스냅샷'}</strong><span>{run.mode === 'live' ? '실시간 연결' : '스냅샷 연결'}</span></div>
+          <div><strong>{run.classification === 'synthetic' ? '합성 UI 데이터' : run.classification === 'computed' ? '하네스 계산 결과' : '저장된 출처 스냅샷'}</strong><span>{run.mode === 'live' ? '실시간 연결' : '스냅샷 연결'}</span></div>
         </div>
         <div className="source-list">
           {focusEvidence.length > 0 ? focusEvidence.map((item) => (

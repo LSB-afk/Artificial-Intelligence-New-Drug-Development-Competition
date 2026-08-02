@@ -246,6 +246,29 @@ def test_the_step_budget_is_never_exceeded(tools):
     assert trace["stopped_reason"] == "step_budget_exhausted"
 
 
+def test_an_observer_sees_bounded_action_lifecycle_events(tools):
+    events = []
+    trace = offline_run(tools, observer=events.append)
+
+    started = [event for event in events if event["type"] == "action_started"]
+    completed = [event for event in events if event["type"] == "action_completed"]
+    assert [event["action"] for event in started] == [step["action"] for step in trace["steps"]]
+    assert [event["action"] for event in completed] == [step["action"] for step in trace["steps"]]
+    assert all(isinstance(event["duration_ms"], int) and event["duration_ms"] >= 0 for event in completed)
+    assert events[-2]["type"] == "finalizing"
+    assert events[-1]["type"] == "completed"
+    assert "prompt" not in json.dumps(events, ensure_ascii=False)
+
+
+def test_an_observer_can_stop_before_a_tool_executes(tools):
+    def stop_on_start(event):
+        if event["type"] == "action_started":
+            raise RuntimeError("cancelled by observer")
+
+    with pytest.raises(RuntimeError, match="cancelled by observer"):
+        offline_run(tools, observer=stop_on_start)
+
+
 def test_an_unknown_goal_is_refused_before_any_action_runs(tools):
     with pytest.raises(ValueError, match="unknown hypothesis"):
         run_agent("IBD:NOT-REAL", tools, LLMConfig.offline())

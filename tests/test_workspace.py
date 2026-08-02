@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from h2l.server import route
+from h2l.server import configure_live_run_manager, route
 from h2l.workspace import run_snapshot
 
 GATED_STAGE_IDS = {"seed", "generate", "activity", "admet", "synthesis"}
@@ -22,14 +22,33 @@ def _get(path: str):
     return status, json.loads(body)
 
 
-@pytest.fixture(scope="module")
-def snapshots() -> dict:
+@pytest.fixture(autouse=True)
+def live_manager(monkeypatch):
+    """Each test gets isolated volatile state and a deterministic offline Agent."""
+    monkeypatch.setenv("H2L_LLM_ENABLED", "0")
+    manager = configure_live_run_manager(step_interval_ms=0)
+    yield manager
+    manager.clear()
+
+
+@pytest.fixture
+def snapshots(live_manager) -> dict:
     _, payload = _get("/api/workspace/runs")
     out = {}
     for summary in payload["runs"]:
+        if not summary["id"].startswith("RUN-"):
+            continue
         _, snapshot = _get(f"/api/workspace/runs/{summary['id']}")
         out[snapshot["targets"][0]["symbol"]] = snapshot
     return out
+
+
+def _create_and_wait(live_manager, scenario: str) -> tuple[dict, dict]:
+    status, _, body = route("POST", "/api/workspace/runs", {"scenario": scenario})
+    assert status == 202
+    initial = json.loads(body)
+    final = live_manager.wait(initial["run"]["id"])
+    return initial, final
 
 
 def assert_contract(snapshot: dict) -> None:
@@ -76,24 +95,30 @@ def test_unknown_run_is_a_404():
     assert payload["error"] == "not_found"
 
 
-def test_creating_a_run_stores_nothing():
-    """POST computes over a packet; the approved set and the list must not move.
+def test_creating_a_run_is_observable_but_does_not_change_the_registry(live_manager):
+    """POST starts volatile work while the approved scientific state stays fixed.
 
-    This is what makes the console's "새 실행" safe to expose. The route runs the
-    rules over an unapproved packet, so the answer is real, but nothing about it
-    survives the request.
+    The browser may reconnect to this process-local progress record, but a server
+    restart removes it and the scientific registry is never mutated.
     """
-    _, before = _get("/api/workspace/runs")
-    status, _, body = route("POST", "/api/workspace/runs", {"scenario": "failed-trial"})
-    assert status == 200
-    _, after = _get("/api/workspace/runs")
-    assert before == after
+    _, registry_before = _get("/api/registry")
+    initial, snapshot = _create_and_wait(live_manager, "failed-trial")
+    _, registry_after = _get("/api/registry")
+    _, listed = _get("/api/workspace/runs")
 
-    snapshot = json.loads(body)
-    assert snapshot["run"]["id"].startswith("SANDBOX-")
+    assert initial["run"]["status"] == "queued"
+    assert initial["targets"] == []
+    assert initial["events"] == []
+    assert snapshot["run"]["id"].startswith("LIVE-SANDBOX-")
+    assert snapshot["run"]["status"] == "awaiting_review"
+    assert registry_before == registry_after
+    assert snapshot["run"]["id"] in {run["id"] for run in listed["runs"]}
     # Unapproved evidence can never open the molecule stage, whatever the verdict.
     assert snapshot["molecules"] == []
     assert "HARNESS-SANDBOX" in {notice["id"] for notice in snapshot["safetyNotices"]}
+    assert next(item for item in snapshot["artifacts"] if item["id"] == "agent-trace")["available"] is True
+    assert_contract(initial)
+    assert_contract(snapshot)
 
 
 def test_creating_a_run_takes_presets_and_nothing_else():
@@ -110,21 +135,22 @@ def test_creating_a_run_takes_presets_and_nothing_else():
     assert route("DELETE", "/api/workspace/runs")[0] == 405
 
 
-def test_a_sandbox_run_never_wears_registry_provenance():
+def test_a_sandbox_run_never_wears_registry_provenance(live_manager):
     """The projection's default strings assert approved-snapshot origin. A run
     computed from an unapproved packet must not inherit them — including in the
     report artifact, which leaves the console on its own."""
-    snapshot = json.loads(route("POST", "/api/workspace/runs", {"scenario": "in-indication-support"})[2])
-    assert snapshot["run"]["id"].startswith("SANDBOX-")
+    _, snapshot = _create_and_wait(live_manager, "in-indication-support")
+    assert snapshot["run"]["id"].startswith("LIVE-SANDBOX-")
     assert "승인된 스냅샷" not in snapshot["stages"][0]["summary"]
-    assert snapshot["stages"][0]["toolCall"]["classification"] == "synthetic"
+    # Agent actions are computed; the evidence packet they inspect remains synthetic.
+    assert snapshot["stages"][0]["toolCall"]["classification"] == "computed"
     assert {item["classification"] for item in snapshot["evidence"]} == {"synthetic"}
 
     packet_artifact = next(a for a in snapshot["artifacts"] if a["id"] == "evidence-packet")
     assert packet_artifact["classification"] == "synthetic"
     report = next(a for a in snapshot["artifacts"] if a["id"] == "decision-report")["content"]
     assert "Provenance: SANDBOX" in report
-    assert "Run: SANDBOX-" in report
+    assert "Run: LIVE-SANDBOX-" in report
 
 
 def test_approved_runs_keep_their_provenance():
@@ -137,27 +163,58 @@ def test_approved_runs_keep_their_provenance():
     assert "SANDBOX" not in report
 
 
-def test_created_runs_are_reproducible():
-    """Same packet, same run: the id is derived from content, not a counter."""
-    first = route("POST", "/api/workspace/runs", {"scenario": "cross-indication"})[2]
-    second = route("POST", "/api/workspace/runs", {"scenario": "cross-indication"})[2]
-    assert first == second
+def test_created_runs_have_unique_runtime_ids_and_reproducible_science(live_manager):
+    """Two observations need unique ids; their deterministic verdict stays equal."""
+    _, first = _create_and_wait(live_manager, "cross-indication")
+    _, second = _create_and_wait(live_manager, "cross-indication")
+    assert first["run"]["id"] != second["run"]["id"]
+    assert first["targets"] == second["targets"]
+    assert first["evidence"] == second["evidence"]
+    assert first["molecules"] == second["molecules"] == []
 
 
-def test_every_preset_reaches_the_console_contract():
+def test_every_preset_reaches_the_console_contract(live_manager):
     """Each preset isolates one rule path, so the four must not collapse to one verdict."""
     _, catalog = _get("/api/scenarios")
     verdicts = {}
     for preset in catalog["scenarios"]:
-        status, _, body = route("POST", "/api/workspace/runs", {"scenario": preset["id"]})
-        assert status == 200, preset["id"]
-        verdicts[preset["id"]] = json.loads(body)["targets"][0]["decision"]
+        initial, snapshot = _create_and_wait(live_manager, preset["id"])
+        assert initial["run"]["status"] == "queued", preset["id"]
+        assert_contract(snapshot)
+        verdicts[preset["id"]] = snapshot["targets"][0]["decision"]
     assert verdicts == {
         "in-indication-support": "review",
         "failed-trial": "rejected",
         "cross-indication": "insufficient",
         "context-only": "insufficient",
     }
+
+
+def test_a_live_run_can_be_cancelled_before_the_first_tool(live_manager):
+    live_manager.step_interval_ms = 200
+    status, _, body = route("POST", "/api/workspace/runs", {"scenario": "failed-trial"})
+    assert status == 202
+    run_id = json.loads(body)["run"]["id"]
+
+    cancel_status, _, cancel_body = route("POST", f"/api/workspace/runs/{run_id}/cancel")
+    cancelled = json.loads(cancel_body)
+    assert cancel_status == 200
+    assert cancelled["run"]["status"] == "cancelled"
+    assert all(stage["status"] == "cancelled" for stage in cancelled["stages"])
+    assert cancelled["events"][-1]["tool"] == "cancel"
+    assert live_manager.wait(run_id)["run"]["status"] == "cancelled"
+
+
+def test_active_live_run_capacity_fails_closed(live_manager):
+    live_manager.step_interval_ms = 200
+    live_manager.max_runs = 1
+    first_status, _, first_body = route("POST", "/api/workspace/runs", {"scenario": "failed-trial"})
+    second_status, _, second_body = route("POST", "/api/workspace/runs", {"scenario": "cross-indication"})
+
+    assert first_status == 202
+    assert second_status == 429
+    assert json.loads(second_body)["error"] == "live_run_capacity"
+    route("POST", f"/api/workspace/runs/{json.loads(first_body)['run']['id']}/cancel")
 
 
 def test_projection_is_byte_reproducible():

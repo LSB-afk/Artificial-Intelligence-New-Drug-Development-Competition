@@ -56,8 +56,23 @@ export default function ReportView({ snapshot }: { snapshot: RunSnapshot }) {
   const conflicting = focusEvidence.filter((item) => item.polarity === 'conflicting')
   const availableArtifacts = artifacts.filter((artifact) => artifact.available)
   const isFixture = run.scenarioKind === 'molecule-ui-fixture'
-  const isPending = !isFixture && !focusTarget
   const isRunActive = run.status === 'queued' || run.status === 'running'
+  const isPending = !isFixture && (isRunActive || !focusTarget)
+  const verdictLabel = focusTarget?.decision === 'rejected'
+    ? 'REJECTED'
+    : focusTarget?.decision === 'insufficient'
+      ? 'INSUFFICIENT'
+      : focusTarget?.decision === 'review'
+        ? 'REVIEW'
+        : 'REFERENCE'
+  const verdictHeadline = focusTarget?.decision === 'review'
+    ? `${focusTarget.symbol}의 다음 단계에는 사람 검토가 필요합니다.`
+    : `${focusTarget?.symbol ?? '타깃'}: ${run.disease} 실행에서는 최적화 대상으로 진행하지 않습니다.`
+  const verdictDetail = focusTarget?.decision === 'rejected'
+    ? '질환별 반증을 반영했고, 진행 가능한 타깃이 없어 분자 단계는 실행하지 않았습니다.'
+    : focusTarget?.decision === 'insufficient'
+      ? '필수 근거가 부족해 분자 단계 진행 여부를 확정하지 않았습니다.'
+      : '자동 판정만으로 분자 단계를 열지 않고 사람 승인 기록을 기다립니다.'
 
   const downloadReport = () => downloadText(`${run.id}-report.txt`, buildReport(snapshot))
   const downloadArtifact = (artifact: Artifact) => downloadText(artifact.name, artifactContent(artifact, snapshot), `${artifact.mimeType};charset=utf-8`)
@@ -86,8 +101,8 @@ export default function ReportView({ snapshot }: { snapshot: RunSnapshot }) {
         ) : (
           <div className="report-verdict">
             <div className="report-verdict-icon"><ShieldCheck size={22} /></div>
-            <div><span>핵심 판단</span><h3>TYK2는 이 IBD 실행의 최적화 대상으로 진행하지 않습니다.</h3><p>적응증별 임상 반증을 반영했고, 채택 타깃이 없어 분자 단계는 실행하지 않았습니다.</p></div>
-            <strong>REJECTED</strong>
+            <div><span>핵심 판단</span><h3>{verdictHeadline}</h3><p>{verdictDetail}</p></div>
+            <strong>{verdictLabel}</strong>
           </div>
         )}
 
