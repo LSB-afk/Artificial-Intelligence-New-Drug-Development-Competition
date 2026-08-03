@@ -36,6 +36,8 @@ BLOCKING_TARGET_DECISIONS = {"REJECT", "HOLD"}
 
 
 def entry_gate(run_mode: str, target_decision: str | None) -> dict:
+    run_mode = (run_mode or "").strip().upper()
+    target_decision = ((target_decision or "").strip().upper() or None)
     if run_mode == "REJECTION_DEMO" or target_decision in BLOCKING_TARGET_DECISIONS:
         return {
             "run_mode": run_mode,
@@ -60,6 +62,8 @@ def entry_gate(run_mode: str, target_decision: str | None) -> dict:
             "therapeutic_claim": False,
             "gate_reason": "target ADVANCE; bounded hypothesis only, no efficacy claim",
         }
+    if run_mode != "METHOD_ONLY":
+        raise ValueError(f"unknown run_mode: {run_mode!r} (expected METHOD_ONLY, SCIENTIFIC, or REJECTION_DEMO)")
     return {
         "run_mode": "METHOD_ONLY",
         "blocked": False,
@@ -78,18 +82,46 @@ def _as_backend(backend):
 
 def score_molecule(mol: dict, reference_actives: list[dict], *, backend=None) -> dict:
     tools = _as_backend(backend)
-    dl = tools.druglikeness(mol)
-    sim = tools.similarity_proxy(mol, reference_actives)
-    adm = tools.admet_risk(mol)
-    syn = tools.synthesizability(mol)
-    saf = tools.safety_alerts(mol)
+    try:
+        if not mol.get("valid", True):
+            raise ValueError("invalid_structure")
+        dl = tools.druglikeness(mol)
+        sim = tools.similarity_proxy(mol, reference_actives)
+        adm = tools.admet_risk(mol)
+        syn = tools.synthesizability(mol)
+        saf = tools.safety_alerts(mol)
+    except ValueError:
+        return {
+            "candidate_id": mol["candidate_id"],
+            "parent_id": mol.get("parent_id"),
+            "valid": False,
+            "qed": 0.0,
+            "lipinski_pass": False,
+            "veber_pass": False,
+            "tanimoto": 0.0,
+            "nearest_reference": None,
+            "activity_evidence": {
+                "type": mol.get("activity_evidence", {}).get("type", "UNKNOWN"),
+                "limitation": "similarity/model is not measured activity",
+            },
+            "admet": {"herg": None, "ames": None, "dili": None, "cyp3a4": None},
+            "admet_safety_score": 0.0,
+            "synthesis": {"sa_score": None, "route_found": None},
+            "novelty_score": 0.0,
+            "alerts": [],
+            "composite_score": 0.0,
+            "hard_fail": ["invalid_structure"],
+            "tool_lineage": DEFAULT_TOOL_NAMES,
+            "backend": tools.name,
+            "evidence": list(mol.get("evidence", [])),
+        }
 
     qed = dl["value"]["qed"]
     tanimoto = sim["value"]["tanimoto"]
     sa = syn["value"]["sa_score"]
     admet_safety = adm["value"]["admet_safety_score"]
     in_band = SIMILARITY_BAND[0] <= tanimoto <= SIMILARITY_BAND[1]
-    novelty = 1.0 if tanimoto < 0.85 else 0.0
+    novelty = _clamp((SIMILARITY_BAND[1] - tanimoto) / (SIMILARITY_BAND[1] - SIMILARITY_BAND[0]))
     evidence_type = mol.get("activity_evidence", {}).get("type", "UNKNOWN")
     has_trace = evidence_type != "UNKNOWN" and bool(mol.get("evidence"))
 
@@ -199,7 +231,7 @@ def _dedupe(items: list[dict]) -> list[dict]:
 
 def optimize(pool, reference_actives, *, run_mode="METHOD_ONLY", target_decision=None, top_k=TOP_K, seed=42, backend=None) -> dict:
     gate = entry_gate(run_mode, target_decision)
-    tools = resolve_backend(backend)
+    tools = _as_backend(backend)
     base = {
         **gate,
         "seed": seed,

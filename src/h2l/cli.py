@@ -89,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     molopt_p = sub.add_parser("molopt", help="run the eligibility-gated molecular optimization loop")
     molopt_p.add_argument("--pool", required=True, help="path to a candidate pool JSON")
     molopt_p.add_argument("--run-mode", default="METHOD_ONLY", choices=["METHOD_ONLY", "SCIENTIFIC", "REJECTION_DEMO"])
-    molopt_p.add_argument("--target-decision", default=None, help="ADVANCE/HOLD/REJECT of the eligible target")
+    molopt_p.add_argument("--target-decision", default=None, choices=["ADVANCE", "HOLD", "REJECT"], help="ADVANCE/HOLD/REJECT of the eligible target")
     molopt_p.add_argument("--backend", default=None, choices=["reference", "rdkit"], help="chemistry backend (default: pool's backend, else reference)")
     molopt_p.set_defaults(func=cmd_molopt)
 
