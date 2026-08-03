@@ -92,7 +92,11 @@ export default function AgentHarnessView() {
   }
 
   const actions: AgentAction[] = run?.actions ?? OFFLINE_ACTIONS
-  const offline = catalog !== null && !catalog.reachable && run === null
+  // 서버 연결과 모델 연결은 다른 상태입니다. 서버가 떠 있고 AI 모델만 없으면
+  // '오프라인'이 아니라 '규칙 방식 실행'이고, 진짜 오프라인은 서버에 닿지 못한 경우뿐입니다.
+  const serverOffline = catalog !== null && !catalog.serverReachable
+  const modelReady = catalog !== null && catalog.serverReachable && catalog.installed.length > 0
+  const offline = serverOffline && run === null
 
   return (
     <div className="system-page">
@@ -101,8 +105,9 @@ export default function AgentHarnessView() {
           <span className="system-kicker"><Bot size={14} /> AI·자동화 관리</span>
           <h1>신약개발 Agent 하네스</h1>
           <p>
-            로컬 모델은 다음에 실행할 행동만 고르고, 관측과 판정은 결정론적 코드가 씁니다. 모델이 고르지 못한
-            단계는 고정 정책이 대신 고르며 그 사실을 함께 기록합니다. 게이트는 선택이 아니라 실행에서 막습니다.
+            로컬 모델은 다음에 실행할 행동만 고르고, 관측·판정·승인 상태는 결정론적 코드가 실행 기록에 남깁니다.
+            모델이 고르지 못한 단계는 고정 정책이 대신 고르며 그 사실을 함께 기록합니다. 게이트는 선택이 아니라
+            실행에서 막습니다. 여기서 만든 실행은 즉석 실행이라 좌측 ‘최근 실행’ 목록에는 남지 않습니다.
           </p>
         </div>
         <div className="system-summary-chips" aria-label="에이전트 실행 요약">
@@ -119,9 +124,11 @@ export default function AgentHarnessView() {
             <div className="ops-reason-title">
               <strong>{goal || '가설 없음'}</strong>
               <small className="cell-sub">
-                {catalog?.reachable
-                  ? `${catalog.host} · 모델 ${catalog.installed.length}개`
-                  : '하네스 오프라인'}
+                {serverOffline
+                  ? '하네스 서버 오프라인'
+                  : modelReady
+                    ? `${catalog?.host} · 모델 ${catalog?.installed.length}개`
+                    : '하네스 연결됨 · 규칙 방식 실행 (AI 모델 없음)'}
               </small>
             </div>
             <button className="secondary-button" type="button" disabled={pending || !goal} onClick={handleRun}>

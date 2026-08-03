@@ -100,7 +100,9 @@ export default function OverviewView({ snapshot, selectedStageId, onSelectStage,
         : '참고 전용'
   const decisionHeadline = focusTarget?.decision === 'review'
     ? `${focusTarget.symbol} 판정은 사람 검토와 승인 기록이 필요합니다.`
-    : `${focusTarget?.symbol ?? '타깃'}: ${run.disease} 실행에서는 분자 최적화 대상으로 진행하지 않습니다.`
+    : focusTarget?.decision === 'insufficient'
+      ? `${focusTarget?.symbol ?? '타깃'}: ${run.disease} 실행에서 판단에 필요한 근거가 부족합니다 (보류).`
+      : `${focusTarget?.symbol ?? '타깃'}: ${run.disease} 실행에서는 분자 최적화 대상으로 진행하지 않습니다.`
   const decisionDetail = focusTarget?.decision === 'rejected'
     ? '질환에 맞는 지지 근거와 반증을 분리해 운영 점수를 다시 계산했습니다.'
     : focusTarget?.decision === 'insufficient'

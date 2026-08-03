@@ -15,4 +15,13 @@ export default defineConfig({
       '/api': { target: 'http://127.0.0.1:8765', changeOrigin: false },
     },
   },
+  // `vite preview`는 server.proxy를 쓰지 않으므로, 빌드 산출물을 하네스와 함께
+  // 서빙할 때 /api가 404로 죽지 않도록 동일한 프록시를 preview에도 명시합니다.
+  preview: {
+    port: 4173,
+    strictPort: true,
+    proxy: {
+      '/api': { target: 'http://127.0.0.1:8765', changeOrigin: false },
+    },
+  },
 })

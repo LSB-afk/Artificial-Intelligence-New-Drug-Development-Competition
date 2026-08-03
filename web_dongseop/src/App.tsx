@@ -283,7 +283,7 @@ function App() {
   const monitorActive = ['overview', 'targets', 'molecules', 'failures'].includes(activeTab)
   const systemViewLabels: Partial<Record<TabId, string>> = {
     organization: 'AI 조직도',
-    skills: '에이전트 스킬',
+    skills: 'AI 운영 스킬',
     'analysis-request': 'AI 분석 요청',
     'agent-harness': '신약개발 Agent 하네스',
     'evidence-search': '근거/논문 검색',
@@ -320,10 +320,10 @@ function App() {
           <button aria-current={activeTab === 'report' ? 'page' : undefined} className={activeTab === 'report' ? 'is-active' : ''} type="button" onClick={() => setActiveTab('report')}><BookOpenCheck size={17} /> 산출물</button>
         </nav>
 
-        <div className="sidebar-section-heading"><span>AI 운영</span><span>11 agents</span></div>
+        <div className="sidebar-section-heading"><span>AI 운영</span><span>설계 로스터</span></div>
         <nav className="sidebar-nav" aria-label="AI 조직과 스킬">
           <button aria-current={activeTab === 'organization' ? 'page' : undefined} className={activeTab === 'organization' ? 'is-active' : ''} type="button" onClick={() => { setActiveTab('organization'); setIsSidebarOpen(false) }}><Network size={17} /> AI 조직도</button>
-          <button aria-current={activeTab === 'skills' ? 'page' : undefined} className={activeTab === 'skills' ? 'is-active' : ''} type="button" onClick={() => { setActiveTab('skills'); setIsSidebarOpen(false) }}><Boxes size={17} /> 에이전트 스킬</button>
+          <button aria-current={activeTab === 'skills' ? 'page' : undefined} className={activeTab === 'skills' ? 'is-active' : ''} type="button" onClick={() => { setActiveTab('skills'); setIsSidebarOpen(false) }}><Boxes size={17} /> AI 운영 스킬</button>
         </nav>
 
         <div className="sidebar-section-heading"><span>AI·자동화 관리</span></div>
@@ -366,9 +366,16 @@ function App() {
             <button className="mobile-menu icon-button" type="button" onClick={() => setIsSidebarOpen(true)} aria-label="메뉴 열기"><Menu size={19} /></button>
             <span>{isSystemView ? systemGroupLabel : '실행'}</span><span className="breadcrumb-separator">/</span><strong>{isSystemView ? systemViewLabel : run.id}</strong>
           </div>
-          <div className="topbar-actions"><span className={`adapter-state${isConnected ? ' is-connected' : ''}`}>{isConnected ? <Bot size={14} /> : <Database size={14} />} {isConnected ? '하네스 연결됨' : '스냅샷 연결'}</span><div className="avatar" aria-label="사용자 프로필">VS</div></div>
+          <div className="topbar-actions"><span className={`adapter-state${isConnected ? ' is-connected' : ''}`}>{isConnected ? <Bot size={14} /> : <Database size={14} />} {isConnected ? '하네스 연결됨' : '하네스 오프라인'}</span><div className="avatar" aria-label="사용자 프로필">VS</div></div>
         </header>
 
+        {!isConnected && (
+          <div className="offline-banner" role="note">
+            <Database size={15} />
+            <strong>하네스 서버(:8765) 오프라인</strong>
+            <span>고정 픽스처만 표시 중입니다. 실제 규칙 실행·판정을 보려면 하네스를 켜세요.</span>
+          </div>
+        )}
         {!isSystemView && <div className={`context-banner context-${run.classification}`} role="note">
           {run.classification === 'synthetic' ? <FlaskConical size={16} /> : run.classification === 'computed' ? <Bot size={16} /> : <Database size={16} />}
           <strong>{contextBanner.title}</strong>

@@ -51,7 +51,7 @@ export default function OrganizationView() {
         <div>
           <span className="system-kicker"><Network size={14} /> AI 운영 구조</span>
           <h1>H2L-Forge AI 조직도</h1>
-          <p>근거 수집과 반증, 분자 게이트, 감사 평가의 책임과 인계 관계를 한 화면에서 확인합니다.</p>
+          <p>근거 수집과 반증, 분자 게이트, 감사 평가의 책임과 인계 관계를 한 화면에서 확인합니다. 이 조직도는 <strong>설계 로스터(11개 역할)</strong>이며, 실제 백엔드 실행은 승인된 가설(현재 2건: IBD:TYK2, IBD:DEMO-POS)을 대상으로 단일 행동선택 루프를 돌립니다.</p>
         </div>
         <div className="system-summary-chips" aria-label="조직 요약">
           <span><strong>{h2lAgents.length}</strong> 에이전트</span>

@@ -72,7 +72,10 @@ export interface ModelCatalog {
   host: string
   installed: string[]
   defaultModel: string | null
+  /** AI 모델이 하나라도 설치돼 있는지. `reachable`은 서버 연결이 아니라 모델 유무입니다. */
   reachable: boolean
+  /** 하네스 서버(:8765)에 닿았는지. 모델 유무와 별개입니다. */
+  serverReachable: boolean
   note: string
 }
 
@@ -93,6 +96,7 @@ export const OFFLINE_CATALOG: ModelCatalog = {
   installed: [],
   defaultModel: null,
   reachable: false,
+  serverReachable: false,
   note: '하네스 서버에 연결할 수 없습니다. 행동 허용 목록만 표시합니다.',
 }
 
@@ -147,6 +151,8 @@ export async function listModels(): Promise<ModelCatalog> {
       installed: payload.installed ?? [],
       defaultModel: payload.default ?? null,
       reachable: payload.reachable ?? false,
+      // 여기까지 도달했다는 것은 /api/models가 응답했다는 뜻 = 서버는 연결됨.
+      serverReachable: true,
       note: payload.note ?? '',
     }
   } catch {
