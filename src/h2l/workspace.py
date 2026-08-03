@@ -113,10 +113,11 @@ def _score_factors(packet: dict) -> tuple[int, list[dict]]:
     score = 100
     for record, share in zip(records, _shares(len(records))):
         evidence_id = record["evidence_id"]
+        outcome = (record.get("outcome") or "").strip().lower()
         in_indication = record.get("indication_id") in indication_ids
         if not in_indication:
             reason = ("indication-mismatch", f"적응증 불일치 · {record.get('indication', '기타 적응증')}")
-        elif record.get("outcome") in NEGATIVE_OUTCOMES:
+        elif outcome in NEGATIVE_OUTCOMES:
             reason = ("clinical-contradiction", f"임상 반증 · {record.get('indication', '해당 적응증')}")
         else:
             continue  # in-indication support keeps its share
@@ -140,9 +141,10 @@ def _polarity(record: dict, indication_ids: set[str]) -> str:
         return "neutral"
     if record.get("indication_id") not in indication_ids:
         return "neutral"
-    if record.get("outcome") in NEGATIVE_OUTCOMES:
+    outcome = (record.get("outcome") or "").strip().lower()
+    if outcome in NEGATIVE_OUTCOMES:
         return "conflicting"
-    return "supporting" if record.get("outcome") == "positive" else "neutral"
+    return "supporting" if outcome == "positive" else "neutral"
 
 
 def _evidence_detail(record: dict, polarity: str) -> str:

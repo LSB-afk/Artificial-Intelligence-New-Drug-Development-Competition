@@ -121,12 +121,13 @@ class ClinicalContradictionCritic:
             eid = record["evidence_id"]
             if record.get("kind") in CONTEXT_KINDS:
                 continue  # measured/predicted/proxy -> context, not clinical support
+            outcome = (record.get("outcome") or "").strip().lower()
             in_indication = record.get("indication_id") in indication_ids
             if not in_indication:
                 cross_indication.append(eid)
-            elif record.get("outcome") in NEGATIVE_OUTCOMES:
+            elif outcome in NEGATIVE_OUTCOMES:
                 contradicting.append(eid)
-            elif record.get("outcome") == "positive":
+            elif outcome == "positive":
                 supporting.append(eid)
 
         rule_ids: list[str] = []
@@ -148,7 +149,11 @@ class SupportOnlyCritic:
     to quantify the contradiction critic's contribution."""
 
     def evaluate(self, packet: dict) -> CriticVerdict:
-        positives = [r["evidence_id"] for r in packet["records"] if r.get("outcome") == "positive"]
+        positives = [
+            r["evidence_id"]
+            for r in packet["records"]
+            if (r.get("outcome") or "").strip().lower() == "positive"
+        ]
         if positives:
             return CriticVerdict("ADVANCE", ["SUPPORT_ONLY"], positives)
         return CriticVerdict("HOLD", ["REQUIRED_EVIDENCE_MISSING"], [])

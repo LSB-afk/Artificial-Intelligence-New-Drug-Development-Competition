@@ -38,6 +38,9 @@ BUDGET = {"max_tool_calls": 5, "max_attempts": 2}
 # would push the fact set past what a local 7-8B model can read. This bounds the
 # prompt, not the science: no demo packet approaches it.
 MAX_RECORDS = 100
+# The critic compares outcomes by normalized membership; anything outside this
+# vocabulary would silently degrade the verdict, so reject it at the boundary.
+ALLOWED_OUTCOMES = {"positive", "failed", "negative"}
 
 
 class PacketRejected(Exception):
@@ -193,6 +196,9 @@ def validate_packet(packet) -> dict:
             raise PacketRejected(f"records[{index}]는 JSON 객체여야 합니다.")
         if not isinstance(record.get("evidence_id"), str) or not record["evidence_id"].strip():
             raise PacketRejected(f"records[{index}]에 'evidence_id'가 없습니다.")
+        outcome = record.get("outcome")
+        if outcome is not None and (not isinstance(outcome, str) or outcome.strip().lower() not in ALLOWED_OUTCOMES):
+            raise PacketRejected(f"records[{index}]의 'outcome' 값이 허용되지 않습니다: {outcome!r}")
 
     return packet
 
