@@ -28,7 +28,6 @@ prompt hash, the chosen action, and the validation outcome.
 from __future__ import annotations
 
 import json
-
 import time
 
 from h2l.llm import LLMConfig, explain_decision, generate, prompt_hash
@@ -381,8 +380,16 @@ def run_agent(
     *,
     max_steps: int = DEFAULT_MAX_STEPS,
     generator=generate,
+    observer=None,
 ) -> dict:
-    """Run the loop until the agent finishes or the step budget is spent."""
+    """Run the loop until the agent finishes or the step budget is spent.
+
+    ``observer`` receives bounded lifecycle events for serving-plane progress
+    displays. It sees action names, validated arguments, selection provenance,
+    deterministic observations, and elapsed milliseconds, never prompts or
+    hidden reasoning. The core does not catch observer exceptions: a caller may
+    use one to cancel an in-flight run before the next tool executes.
+    """
     settings = config or LLMConfig.from_env()
     known = tools.known_ids()
     if goal not in known:
@@ -401,24 +408,41 @@ def run_agent(
             finished = True
             break
 
+        step_number = len(steps) + 1
+        if observer:
+            observer(
+                {
+                    "type": "action_started",
+                    "step": step_number,
+                    "action": choice["action"],
+                    "args": choice["args"],
+                    "selected_by": choice["selected_by"],
+                    "selection_note": choice["reason"],
+                }
+            )
         handler = getattr(tools, choice["action"])
+        action_started = time.monotonic()
         observation = handler(**choice["args"])
-        steps.append(
-            {
-                "step": len(steps) + 1,
-                "action": choice["action"],
-                "args": choice["args"],
-                "selected_by": choice["selected_by"],
-                "selection_note": choice["reason"],
-                "observation": observation,
-                "refused": observation["refused"],
-            }
-        )
+        duration_ms = max(0, int((time.monotonic() - action_started) * 1000))
+        step = {
+            "step": step_number,
+            "action": choice["action"],
+            "args": choice["args"],
+            "selected_by": choice["selected_by"],
+            "selection_note": choice["reason"],
+            "observation": observation,
+            "refused": observation["refused"],
+        }
+        steps.append(step)
+        if observer:
+            observer({"type": "action_completed", **step, "duration_ms": duration_ms})
 
+    if observer:
+        observer({"type": "finalizing", "step_count": len(steps)})
     decision = tools.decision(goal)
     explanation = explain_decision(decision, settings)
     model_steps = sum(1 for step in steps if step["selected_by"] == "model")
-    return {
+    result = {
         "goal": goal,
         "model_enabled": settings.enabled,
         "model": settings.model if settings.enabled else None,
@@ -444,3 +468,6 @@ def run_agent(
         },
         "audit": audits + [explanation["audit"]],
     }
+    if observer:
+        observer({"type": "completed", "step_count": len(steps)})
+    return result

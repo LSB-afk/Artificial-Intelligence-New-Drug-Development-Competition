@@ -46,7 +46,12 @@ async function harnessReachable() {
 async function startHarness() {
   const child = spawn('python3', ['-m', 'h2l.server', '--port', String(HARNESS_PORT)], {
     cwd: repoRoot,
-    env: { ...process.env, PYTHONPATH: 'src' },
+    env: {
+      ...process.env,
+      PYTHONPATH: 'src',
+      H2L_LLM_ENABLED: '0',
+      H2L_LIVE_STEP_INTERVAL_MS: '350',
+    },
     stdio: 'ignore',
     detached: true,
   })
@@ -171,6 +176,7 @@ try {
   // 계산된 실행 2건 + 픽스처 2건. 하나라도 사라지면 폴백이나 병합이 깨진 것입니다.
   assert(connected.runCount === 4, `실행 수가 계산 2 + 픽스처 2가 아닙니다: ${connected.runCount}`)
   checks.push(`harness connected ${JSON.stringify(connected)}`)
+  const registryBefore = await fetch(`${HARNESS_ORIGIN}/api/registry`).then((r) => r.text())
 
   // ---- 2. 시나리오는 하네스가 내려준 것인가 -------------------------------
   const online = await readStartDialog(page)
@@ -243,7 +249,30 @@ try {
   await dialog.getByRole('button', { name: /실패 임상/ }).click()
   await dialog.getByRole('button', { name: /실행 시작/ }).click()
   await page.locator('.start-modal').waitFor({ state: 'detached' })
-  await wait(700)
+
+  // POST가 최종 결과를 즉시 돌려주는 가짜 진행이면 이 상태 자체가 나타나지 않습니다.
+  await page.locator('.app-shell.is-running').waitFor({ timeout: 3_000 })
+  await page.locator('.stage-item-running').waitFor({ timeout: 3_000 })
+  await page.screenshot({ path: artifactPath('online-live-progress.png'), fullPage: true })
+  const observedStages = []
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const progress = await page.evaluate(() => ({
+      active: document.querySelector('.app-shell')?.classList.contains('is-running') ?? false,
+      stage: document.querySelector('.stage-item-running .stage-copy strong')?.textContent?.trim() ?? '',
+      banner: document.querySelector('.run-activity-banner .activity-copy strong')?.textContent?.trim() ?? '',
+    }))
+    if (progress.stage && !observedStages.includes(progress.stage)) observedStages.push(progress.stage)
+    if (!progress.active) break
+    await wait(100)
+  }
+  assert(observedStages.length >= 3, `실행 단계 변화가 충분히 관찰되지 않았습니다: ${observedStages.join(', ')}`)
+  assert(
+    observedStages.some((stage) => stage.includes('근거')) && observedStages.some((stage) => stage.includes('분자')),
+    `근거 검사와 분자 게이트가 실제 순서에 나타나지 않았습니다: ${observedStages.join(', ')}`,
+  )
+  await page.locator('.app-shell.is-running').waitFor({ state: 'detached', timeout: 12_000 }).catch(async () => {
+    assert(!(await page.locator('.app-shell').evaluate((shell) => shell.classList.contains('is-running'))), 'Agent 실행이 제한 시간 안에 끝나지 않았습니다.')
+  })
 
   const run = await page.evaluate(() => ({
     classification: document.querySelector('.run-metrics > div:last-child strong')?.textContent?.trim() ?? '',
@@ -253,6 +282,8 @@ try {
   }))
   assert(run.heading.includes('DEMO-TARGET-B'), `실패 임상 프리셋의 타깃이 아닙니다: ${run.heading}`)
   assert(run.classification === '계산 결과', `계산 결과로 분류되지 않았습니다: ${run.classification}`)
+  assert(run.notices.includes('하네스가 계산한 판정'), `완료 뒤 계산 결과 안내가 없습니다: ${run.notices}`)
+  checks.push(`live stages observed ${JSON.stringify(observedStages)}`)
   checks.push(`preset run computed ${JSON.stringify(run)}`)
 
   // 기각 판정이면 분자 단계가 열리면 안 됩니다. 이 게이트가 지키는 과학 불변식입니다.
@@ -264,7 +295,7 @@ try {
   await page.locator('#panel-molecules').waitFor()
   const moleculeText = await page.locator('#panel-molecules').innerText()
   assert(
-    moleculeText.includes('진행 거절 판정이라 분자 단계를 열지 않았습니다.'),
+    moleculeText.includes('진행 불가 판정이라 분자 단계를 열지 않았습니다.'),
     `기각 실행인데 분자 화면이 게이트 차단을 말하지 않습니다: ${moleculeText.slice(0, 160)}`,
   )
   assert(!/후보|candidate/i.test(moleculeText.split('\n')[0] ?? ''), '기각 실행에 분자 후보가 표시됩니다.')
@@ -282,22 +313,43 @@ try {
   await download.saveAs(reportPath)
   const report = await readFile(reportPath, 'utf8')
   assert(report.includes('Provenance: SANDBOX'), `내려받은 보고서에 SANDBOX 출처 표기가 없습니다:\n${report}`)
-  assert(/Run: SANDBOX-/.test(report), `보고서의 실행 id에 SANDBOX 표시가 없습니다:\n${report}`)
+  assert(/Run: LIVE-SANDBOX-/.test(report), `보고서의 실행 id에 LIVE-SANDBOX 표시가 없습니다:\n${report}`)
   assert(/Molecule eligible: false/.test(report), `승인 없는 실행인데 분자 단계가 열렸습니다:\n${report}`)
   await page.screenshot({ path: artifactPath('online-preset-run.png'), fullPage: true })
   checks.push(`sandbox provenance survives into the exported report (${download.suggestedFilename()})`)
 
-  // ---- 4. 과학 plane은 여전히 읽기 전용인가 -------------------------------
-  const listAfter = await fetch(`${HARNESS_ORIGIN}/api/workspace/runs`).then((r) => r.text())
+  // ---- 4. 화면의 취소가 실제 Agent 작업에 전달되는가 -----------------------
+  await page.getByRole('button', { name: '새 실행', exact: true }).first().click()
+  await page.locator('.start-modal').waitFor()
+  await wait(600)
+  const cancelDialog = page.getByRole('dialog', { name: '새 실행 시작' })
+  await cancelDialog.getByRole('button', { name: /실패 임상/ }).click()
+  await cancelDialog.getByRole('button', { name: /실행 시작/ }).click()
+  await page.getByRole('tab', { name: /개요/ }).click()
+  await page.locator('.stage-item-running').waitFor({ timeout: 3_000 })
+  await page.getByRole('button', { name: '실행 취소', exact: true }).click()
+  await page.locator('.app-shell.is-running').waitFor({ state: 'detached', timeout: 3_000 })
+  const cancellation = await page.evaluate(() => ({
+    status: document.querySelector('.run-title-line .status-badge')?.textContent?.trim() ?? '',
+    cancelledStages: document.querySelectorAll('.stage-item-cancelled').length,
+    title: document.querySelector('h1')?.textContent?.trim() ?? '',
+  }))
+  assert(cancellation.status === '취소', `취소 응답이 화면 상태에 반영되지 않았습니다: ${JSON.stringify(cancellation)}`)
+  assert(cancellation.cancelledStages > 0, `취소된 단계가 표시되지 않았습니다: ${JSON.stringify(cancellation)}`)
+  checks.push(`browser cancellation reaches the live Agent ${JSON.stringify(cancellation)}`)
+
+  // ---- 5. 과학 plane은 여전히 읽기 전용인가 -------------------------------
+  const listAfter = await fetch(`${HARNESS_ORIGIN}/api/workspace/runs`).then((r) => r.json())
   const registryAfter = await fetch(`${HARNESS_ORIGIN}/api/registry`).then((r) => r.text())
-  assert(JSON.parse(listAfter).runs.length === 2, '실행 생성이 하네스 목록을 바꿨습니다.')
-  assert(!listAfter.includes('SANDBOX-'), 'sandbox 실행이 하네스 목록에 저장됐습니다.')
+  assert(listAfter.runs.length === 4, `휘발성 실행 2건이 목록에 다시 연결되지 않습니다: ${listAfter.runs.length}`)
+  assert(listAfter.runs.filter((item) => item.id.startsWith('LIVE-SANDBOX-')).length === 2, '목록에 완료·취소 Agent 실행이 모두 없습니다.')
   // "SANDBOX가 없다"는 500 오류 본문에서도 참이므로, 응답이 진짜인지 먼저 봅니다.
   assert(JSON.parse(registryAfter).groups.length > 0, '레지스트리 응답이 비어 있어 오염 여부를 확인할 수 없습니다.')
+  assert(registryAfter === registryBefore, '콘솔 실행 전후로 과학 레지스트리 응답이 달라졌습니다.')
   assert(!registryAfter.includes('SANDBOX'), 'sandbox 실행이 레지스트리에 들어갔습니다.')
-  checks.push('scientific plane unchanged by a console run')
+  checks.push('volatile run reconnects while the scientific registry stays unchanged')
 
-  // ---- 5. UI 토큰이 살아 있는가(연결 경로에서도) --------------------------
+  // ---- 6. UI 토큰이 살아 있는가(연결 경로에서도) --------------------------
   await page.getByRole('tab', { name: /개요/ }).click()
   const tokens = await page.evaluate(() => ({
     sidebar: getComputedStyle(document.querySelector('.sidebar')).backgroundColor,
@@ -309,7 +361,7 @@ try {
   assert(tokens.body >= 15, `기본 글자 크기가 너무 작습니다: ${tokens.body}px`)
   checks.push(`style tokens hold on the connected path ${JSON.stringify(tokens)}`)
 
-  // ---- 6. 연결 상태를 다시 재는가 ----------------------------------------
+  // ---- 7. 연결 상태를 다시 재는가 ----------------------------------------
   // 콘솔을 열어 둔 채 하네스를 껐다 켜는 것은 데모 중에 실제로 일어나는 일이고,
   // 마운트 때 한 번만 재던 시절에는 새로고침 전까지 계속 "닿지 않습니다"였습니다.
   offlineWindow.open = true
@@ -332,6 +384,9 @@ try {
   harness = await startHarness()
   await wait(300)
   offlineWindow.open = false
+  const runsAfterRestart = await fetch(`${HARNESS_ORIGIN}/api/workspace/runs`).then((r) => r.json())
+  assert(runsAfterRestart.runs.length === 2, `서버 재시작 뒤 휘발성 실행이 남았습니다: ${runsAfterRestart.runs.length}`)
+  assert(!runsAfterRestart.runs.some((item) => item.id.startsWith('LIVE-')), '서버 재시작 뒤에도 live 실행이 남았습니다.')
   const back = await readStartDialog(page)
   const backLive = back.modes.find((mode) => mode.label === '실제 하네스 API')
   assert(backLive && !backLive.disabled, '하네스를 다시 켰는데 새로고침 없이는 고를 수 없습니다.')
@@ -339,6 +394,8 @@ try {
     presetLabels.every((label) => back.scenarios.includes(label)),
     `재연결 후 프리셋이 돌아오지 않았습니다: ${back.scenarios}`,
   )
+  const uiRunsAfterRestart = await page.locator('.recent-runs button').count()
+  assert(uiRunsAfterRestart === 4, `재시작으로 사라진 live 실행이 브라우저 목록에 남았습니다: ${uiRunsAfterRestart}`)
   checks.push('connection state is re-measured, not cached from mount')
 
   await wait(300)

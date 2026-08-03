@@ -9,13 +9,27 @@ H2L-Forge 하네스의 실행 상태, 근거 비평, 정책 중단, 출처, 감�
 
 ## 실행
 
+저장소 루트에서 Python 하네스를 먼저 실행합니다. 로컬 모델 없이도 고정 정책으로
+동일한 Agent 행동을 재현하도록 아래 명령은 LLM을 끕니다.
+
+```bash
+PYTHONPATH=src H2L_LLM_ENABLED=0 python3 -m h2l.server --host 127.0.0.1 --port 8765
+```
+
+다른 터미널에서 웹을 실행합니다.
+
 ```bash
 cd web_dongseop
-npm install
+npm ci
 npm run dev -- --host 127.0.0.1 --port 4173
 ```
 
-브라우저 주소는 `http://127.0.0.1:4173/`입니다.
+브라우저 주소는 `http://127.0.0.1:4173/`입니다. Python 하네스가 꺼져 있으면
+웹은 고정 픽스처만 표시하고, 켜져 있으면 실제 Agent 실행 시나리오가 추가됩니다.
+
+로컬 규칙이 너무 빨리 끝나 단계가 보이지 않는 문제를 막기 위해 서버는 기본적으로
+이벤트를 550ms 간격으로 공개합니다. 이 값은 실제 계산 시간이 아니라 화면 관찰용
+간격이며 `H2L_LIVE_STEP_INTERVAL_MS`로 바꿀 수 있습니다.
 
 ## 검증
 
@@ -45,9 +59,11 @@ npm run qa:online  # 하네스는 게이트가 직접 켜고 끔
 
 - 연결 표기와 계산 2건 + 픽스처 2건 병합
 - 모달 시나리오가 `/api/scenarios`가 내려준 프리셋과 일치
-- 프리셋 실행이 실제로 규칙을 통과하고, 기각 실행은 분자 단계를 열지 않음
-- 내려받은 판단 보고서(`SANDBOX-…-report.txt`)에 `Provenance: SANDBOX`가 실림
-- 실행 생성 후에도 하네스 목록과 레지스트리가 그대로 (읽기 전용 불변식)
+- 프리셋 실행에서 실제 Agent 단계가 순서대로 관찰되고, 기각 실행은 분자 단계를 열지 않음
+- 화면의 실행 취소가 Python 작업에 전달되고 단계가 `cancelled`로 바뀜
+- 내려받은 판단 보고서(`LIVE-SANDBOX-…-report.txt`)에 `Provenance: SANDBOX`가 실림
+- 임시 실행은 목록에서 재연결되지만 과학 레지스트리는 그대로 유지됨
+- 서버 재시작 뒤 임시 실행과 브라우저 캐시가 함께 정리됨
 - 연결 경로에서도 사이드바·기본 버튼 색과 글자 크기가 유지됨
 - 하네스를 껐다 켜면 새로고침 없이 연결 상태가 다시 측정됨
 
@@ -78,6 +94,7 @@ src/
     validateSnapshot.ts   fixture 및 응답 일관성 검사
   services/
     harnessClient.ts      UI가 참조하는 단일 연결 지점
+    httpHarness.ts        Python API 요청, polling, 취소, 캐시 정리
     mockHarness.ts        현재 프로토타입용 인메모리 어댑터
   state/
     useHarnessWorkspace.ts 실행 목록, 선택, 구독 상태
@@ -97,20 +114,18 @@ HarnessClient -> RunSnapshot -> useHarnessWorkspace -> View
 
 ## 실제 하네스 연동
 
-실제 백엔드가 준비되면 `src/services/harnessClient.ts`의 구현체를 HTTP 또는 SSE 어댑터로 교체합니다. 화면과 `RunSnapshot` 계약은 유지합니다.
-
-최소 API 범위는 다음과 같습니다.
+현재 `HttpHarnessClient`가 아래 API에 연결되어 있습니다.
 
 ```text
-GET    /api/runs
-POST   /api/runs
-GET    /api/runs/{run_id}
-GET    /api/runs/{run_id}/events
-POST   /api/runs/{run_id}/cancel
-POST   /api/runs/{run_id}/review
+GET    /api/workspace/runs
+POST   /api/workspace/runs
+GET    /api/workspace/runs/{run_id}
+POST   /api/workspace/runs/{run_id}/cancel
 ```
 
-첫 연동에서는 `events`를 polling으로 구현해도 됩니다. 이후 SSE를 도입하더라도 `HarnessClient.subscribe()` 내부만 변경하면 됩니다.
+`POST`는 최종 결과가 아니라 HTTP 202와 `queued` 스냅샷을 반환합니다. 웹은
+`HarnessClient.subscribe()` 안에서 200ms polling을 수행하고, 종료 상태가 오면
+구독을 닫습니다. 이후 SSE를 도입하더라도 이 메서드 내부만 바꾸면 됩니다.
 
 ## 중요한 데이터 계약
 
@@ -126,7 +141,10 @@ POST   /api/runs/{run_id}/review
 
 ## 현재 한계
 
-- 외부 API와 Python 하네스는 아직 연결되지 않았습니다.
+- 실행 입력은 서버가 제공하는 시드 프리셋이며 자유 입력이나 외부 논문 API 조회는 아직 없습니다.
+- 진행 상태는 Python 프로세스 메모리에만 있어 서버를 재시작하면 사라집니다.
+- 단계 공개 간격은 시각 확인용 pacing이며 실제 도구 처리 성능 측정값이 아닙니다.
+- polling 방식이라 서버 이벤트를 즉시 push하는 SSE보다 요청 수가 많습니다.
 - 자유 질병 입력은 정규화 API가 없으므로 비활성 상태입니다.
 - 출처 스냅샷은 현재 시점의 실시간 조회 결과가 아닙니다.
 - 인간 검토는 프로토타입의 상태 변경만 재현하며 인증과 전자서명은 없습니다.

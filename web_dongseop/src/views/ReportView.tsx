@@ -88,9 +88,8 @@ export default function ReportView({ snapshot }: { snapshot: RunSnapshot }) {
   const conflicting = focusEvidence.filter((item) => item.polarity === 'conflicting')
   const availableArtifacts = artifacts.filter((artifact) => artifact.available)
   const isFixture = run.scenarioKind === 'molecule-ui-fixture'
-  const isPending = !isFixture && !focusTarget
   const isRunActive = run.status === 'queued' || run.status === 'running'
-
+  const isPending = !isFixture && (isRunActive || !focusTarget)
   const downloadReport = () => downloadText(`${run.id}-report.txt`, buildReport(snapshot))
   const downloadArtifact = (artifact: Artifact) => downloadText(artifact.name, artifactContent(artifact, snapshot), `${artifact.mimeType};charset=utf-8`)
 

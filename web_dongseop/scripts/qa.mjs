@@ -72,7 +72,7 @@ try {
   checks.push(`harness offline fallback ${JSON.stringify({ ...offlineState, offlineProbes })}`)
 
   await desktop.getByRole('heading', { name: 'IBD 타깃 근거 검토' }).waitFor()
-  await desktop.getByText('TYK2는 이 IBD 실행의 분자 최적화 대상으로 진행하지 않습니다.').waitFor()
+  await desktop.getByText(/TYK2: .*분자 최적화 대상으로 진행하지 않습니다\./).waitFor()
   const fontSizes = await desktop.evaluate(() => {
     const fontSize = (selector) => Number.parseFloat(getComputedStyle(document.querySelector(selector)).fontSize)
     return {

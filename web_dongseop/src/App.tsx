@@ -64,9 +64,16 @@ const terminalStatuses: StageStatus[] = ['completed', 'warning', 'failed', 'skip
  */
 function moleculeGateNote(snapshot: RunSnapshot) {
   if (snapshot.run.scenarioKind !== 'harness-decision') return undefined
-  return snapshot.targets[0]?.decision === 'rejected'
-    ? '진행 거절 판정이라 분자 단계를 열지 않았습니다.'
-    : '판정은 통과했지만 사람 승인 전에는 분자 단계를 열지 않습니다.'
+  if (snapshot.run.status === 'queued' || snapshot.run.status === 'running') {
+    return 'Agent가 근거와 분자 게이트를 확인하고 있습니다.'
+  }
+  const decision = snapshot.targets[0]?.decision
+  if (decision === 'rejected' || decision === 'insufficient') {
+    return '진행 불가 판정이라 분자 단계를 열지 않았습니다.'
+  }
+  return decision
+    ? '판정은 끝났지만 사람 승인 전에는 분자 단계를 열지 않습니다.'
+    : '타깃 판정이 없어 분자 단계를 열지 않았습니다.'
 }
 
 function LiveElapsed({ startedAt }: { startedAt: string }) {
@@ -189,7 +196,7 @@ function App() {
     setStartError(null)
     setIsCreating(true)
     try {
-      // 하네스 프리셋이면 파이썬 결정 코어가 규칙을 실행하고, 픽스처면 브라우저가 복제합니다.
+      // 하네스 프리셋이면 Python Agent가 허용된 행동과 규칙을 실행하고, 픽스처면 브라우저가 복제합니다.
       const next = await createRun(option.harnessScenarioId
         ? { scenario: 'harness-decision', mode: 'live', harnessScenarioId: option.harnessScenarioId }
         : { scenario: option.id as ScenarioKind, mode: 'snapshot' })
@@ -291,7 +298,9 @@ function App() {
   const contextBanner = run.classification === 'synthetic'
     ? { title: '합성 UI fixture', detail: '연구 결과가 아니며 화면 동작 확인에만 사용합니다.' }
     : run.classification === 'computed'
-      ? { title: '하네스가 계산한 판정', detail: '판정·규칙·근거 ID는 파이썬 결정 코어가 계산했습니다. 근거 패킷은 시드 픽스처이며 효능을 주장하지 않습니다.' }
+      ? isRunning
+        ? { title: '실제 Agent 실행 관찰 중', detail: '파이썬 하네스가 선택하고 실행한 행동 이벤트를 순서대로 받고 있습니다. 표시 간격은 단계 확인용이며 실제 계산 시간과 다릅니다.' }
+        : { title: '하네스가 계산한 판정', detail: 'Agent 행동, 판정, 규칙, 근거 ID는 파이썬 하네스가 계산했습니다. 근거 패킷은 시드 픽스처이며 효능을 주장하지 않습니다.' }
       : { title: '저장된 출처 스냅샷', detail: '현재 외부 API를 조회한 결과가 아닙니다. 관측일과 출처 ID를 함께 확인하세요.' }
   const classificationLabel = run.classification === 'synthetic' ? '합성 데이터' : run.classification === 'computed' ? '계산 결과' : '출처 스냅샷'
 
@@ -400,9 +409,9 @@ function App() {
 
         {!isSystemView && <section className="run-metrics" aria-label="실행 요약">
           <div className={isRunning ? 'live-metric' : undefined}><span>단계 처리</span><strong>{metrics.processed}/{snapshot.stages.length}</strong><div className={`progress-track${isRunning ? ' is-live' : ''}`}><i style={{ width: `${progressPercent}%` }} /></div><small>완료 {metrics.completed} · 주의 {metrics.warnings} · 미실행 {metrics.skipped}</small></div>
-          <div className={isRunning ? 'live-metric' : undefined}><span>실행 시간</span><strong>{isRunning ? <LiveElapsed startedAt={run.createdAt} /> : formatDuration(run.durationMs)}</strong><small><Clock3 size={13} /> {isRunning ? `${activityStage?.label ?? '하네스'} 처리 중` : `갱신 ${formatDateTime(run.updatedAt)}`}</small></div>
-          <div><span>타깃 판단</span><strong>{snapshot.targets.length ? `기각 ${metrics.rejected} · 검토 ${metrics.review}` : '해당 없음'}</strong><small>채택된 타깃 0</small></div>
-          <div><span>분자 출력</span><strong>{snapshot.molecules.length ? `${snapshot.molecules.length}개 UI fixture` : '0개 · 미실행'}</strong><small>{snapshot.molecules.length ? '모두 합성 테스트 레코드' : '결정 게이트에서 중단'}</small></div>
+          <div className={isRunning ? 'live-metric' : undefined}><span>{isRunning ? '표시 경과' : '실행 시간'}</span><strong>{isRunning ? <LiveElapsed startedAt={run.createdAt} /> : formatDuration(run.durationMs)}</strong><small><Clock3 size={13} /> {isRunning ? `${activityStage?.label ?? '하네스'} 처리 중` : `갱신 ${formatDateTime(run.updatedAt)}`}</small></div>
+          <div><span>타깃 판단</span><strong>{snapshot.targets.length ? `기각 ${metrics.rejected} · 검토 ${metrics.review}` : isRunning ? '판단 중' : '해당 없음'}</strong><small>{isRunning ? '판정 이벤트 대기' : '채택된 타깃 0'}</small></div>
+          <div><span>분자 출력</span><strong>{snapshot.molecules.length ? `${snapshot.molecules.length}개 UI fixture` : isRunning ? '게이트 확인 중' : '0개 · 미실행'}</strong><small>{snapshot.molecules.length ? '모두 합성 테스트 레코드' : isRunning ? 'Agent 실행 결과 대기' : '결정 게이트에서 중단'}</small></div>
           <div><span>데이터 분류</span><strong>{classificationLabel}</strong><small>{run.mode === 'snapshot' ? '모의 연결' : '하네스 연결'}</small></div>
         </section>}
 
@@ -441,7 +450,7 @@ function App() {
               <button className="icon-button" type="button" onClick={() => setIsModalOpen(false)} aria-label="닫기"><X size={18} /></button>
             </div>
             <p className="modal-intro" id="start-description">{isConnected
-              ? '하네스 시나리오는 파이썬 결정 코어가 규칙을 실행해 판정을 계산합니다. 픽스처 시나리오는 화면 동작만 확인합니다.'
+              ? '하네스 시나리오는 실제 Agent가 허용된 행동을 선택하고 파이썬 도구가 검증·실행합니다. 픽스처 시나리오는 화면 동작만 확인합니다.'
               : '하네스(:8765)가 꺼져 있어 픽스처 시나리오만 제시합니다. 서버를 켜면 규칙을 실제로 실행하는 시나리오가 추가됩니다.'}</p>
             <fieldset className="scenario-fieldset">
               <legend>실행 시나리오</legend>
@@ -456,7 +465,7 @@ function App() {
             <fieldset className="mode-fieldset">
               <legend>연결 방식</legend>
               <button aria-pressed={activeMode === 'snapshot'} className={activeMode === 'snapshot' ? 'is-selected' : ''} type="button" onClick={() => setConnectionMode('snapshot')}><Database size={18} /><div><strong>Mock snapshot adapter</strong><span>브라우저 안 고정 데이터로 화면 동작만 확인합니다.</span></div>{activeMode === 'snapshot' && <CheckCircle2 size={18} />}</button>
-              <button aria-pressed={activeMode === 'live'} className={activeMode === 'live' ? 'is-selected' : ''} disabled={!hasLiveScenarios} type="button" onClick={() => setConnectionMode('live')}><Activity size={18} /><div><strong>실제 하네스 API</strong><span>{hasLiveScenarios ? '파이썬 결정 코어가 규칙을 실행해 판정을 계산합니다.' : '하네스(:8765)에 닿지 않아 고를 수 없습니다.'}</span></div>{activeMode === 'live' && <CheckCircle2 size={18} />}</button>
+              <button aria-pressed={activeMode === 'live'} className={activeMode === 'live' ? 'is-selected' : ''} disabled={!hasLiveScenarios} type="button" onClick={() => setConnectionMode('live')}><Activity size={18} /><div><strong>실제 하네스 API</strong><span>{hasLiveScenarios ? 'Agent 행동 선택, 도구 실행, 게이트 판정을 단계별로 관찰합니다.' : '하네스(:8765)에 닿지 않아 고를 수 없습니다.'}</span></div>{activeMode === 'live' && <CheckCircle2 size={18} />}</button>
             </fieldset>
             {selectedScenarioOption && <div className={`modal-scope scope-${selectedScenarioOption.classification}`}><span>실행 범위</span><p>{selectedScenarioOption.description}</p></div>}
             {startError && <div className="modal-scope scope-synthetic" role="alert"><span>실행 실패</span><p>{startError}</p></div>}

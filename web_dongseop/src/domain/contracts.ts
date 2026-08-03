@@ -16,7 +16,7 @@ export type TabId =
 
 export type DataMode = 'snapshot' | 'live'
 /**
- * `harness-decision`은 파이썬 결정 코어가 계산해 `/api/workspace/runs`로 내려준
+ * `harness-decision`은 파이썬 Agent 하네스가 실행해 `/api/workspace/runs`로 내려준
  * 실행입니다. 나머지 둘은 하네스가 없을 때도 콘솔이 동작하도록 남겨 둔 고정
  * 픽스처입니다. 이 구분은 화면에서 분류 배지로 그대로 드러납니다.
  */
@@ -208,7 +208,7 @@ export interface ScenarioOption {
   classification: DataClassification
   recommended?: boolean
   /**
-   * 값이 있으면 파이썬 결정 코어가 규칙을 실행합니다. 없으면 브라우저 안의
+   * 값이 있으면 파이썬 Agent 하네스가 허용된 행동과 규칙을 실행합니다. 없으면 브라우저 안의
    * 고정 픽스처를 복제할 뿐입니다. 모달의 "연결 방식"은 이 필드에서 파생됩니다.
    */
   harnessScenarioId?: string

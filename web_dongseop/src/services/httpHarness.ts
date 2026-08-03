@@ -11,7 +11,7 @@ import type {
 import { validateSnapshot } from '../domain/validateSnapshot'
 
 /**
- * 파이썬 하네스(:8765)의 읽기 전용 실행 API를 앞에 두고, 나머지는 모의
+ * 파이썬 하네스(:8765)의 실행 API를 앞에 두고, 나머지는 모의
  * 어댑터에 위임하는 클라이언트.
  *
  * 하네스가 살아 있으면 `/api/workspace/runs`가 내려준 **계산된** 실행이 목록
@@ -22,11 +22,18 @@ import { validateSnapshot } from '../domain/validateSnapshot'
  * 하고, 분자 비교 화면처럼 아직 하네스가 만들지 못하는 상태는 픽스처로만
  * 확인할 수 있기 때문입니다. 둘은 `classification` 배지로 구분됩니다.
  *
- * 하네스는 과학 plane을 변경하지 않으므로 생성·취소·검토 처리는 모의 어댑터가
- * 계속 담당합니다. 계산된 실행에 대해서는 이 동작들이 로컬 표시 상태만 바꿉니다.
+ * 새 계산 실행은 서버 메모리에만 잠시 유지됩니다. 브라우저는 실행이 끝날 때까지
+ * 상태를 조회하고, 취소는 서버의 실제 Agent 작업에 전달합니다. 검토 표시는 아직
+ * 브라우저 세션에만 남으며 어떤 동작도 과학 registry를 변경하지 않습니다.
  */
 
 const REQUEST_TIMEOUT_MS = 8_000
+const POLL_INTERVAL_MS = 200
+const activeRunStatuses = new Set(['queued', 'running'])
+
+function isActive(snapshot: RunSnapshot) {
+  return activeRunStatuses.has(snapshot.run.status)
+}
 
 /** 하네스가 준 실패 사유. 없으면 null이고, 그때만 호출부가 문장을 지어냅니다. */
 let lastErrorMessage: string | null = null
@@ -67,10 +74,7 @@ export class HttpHarnessClient implements HarnessClient {
   /** 마지막 목록 조회에서 하네스가 소유권을 주장한 실행 id. */
   private harnessIds = new Set<string>()
   private readonly cache = new Map<string, RunSnapshot>()
-  /**
-   * 시나리오를 눌러 만든 실행. 서버가 저장하지 않으므로 목록 조회로는 다시
-   * 찾을 수 없고, 따라서 `listRuns`가 캐시를 비울 때 함께 지워지면 안 됩니다.
-   */
+  /** 시나리오를 눌러 만든 휘발성 실행의 최신 스냅샷. */
   private readonly sandboxRuns = new Map<string, RunSnapshot>()
   private harnessReachable = false
 
@@ -100,20 +104,33 @@ export class HttpHarnessClient implements HarnessClient {
     if (this.harnessReachable) {
       this.harnessIds = new Set(harnessSummaries.map((run) => run.id))
       this.cache.clear()
+      // 서버가 다시 응답했는데 목록에 없다면 재시작 또는 보관 한도 만료로 사라진
+      // 휘발성 실행입니다. 오프라인 동안에는 보존하되, 서버의 최신 목록을 받은
+      // 뒤까지 과거 실행을 실제 실행처럼 남겨 두지는 않습니다.
+      for (const runId of this.sandboxRuns.keys()) {
+        if (!this.harnessIds.has(runId)) this.sandboxRuns.delete(runId)
+      }
     }
     const fixtures = await this.fallback.listRuns()
     const sandbox = [...this.sandboxRuns.values()].map((snapshot) => structuredClone(snapshot.run))
-    return [...sandbox, ...harnessSummaries, ...fixtures]
+    // 연결된 서버의 요약을 우선하고 같은 휘발성 실행이 로컬 캐시에도 있을 때는
+    // 한 번만 표시합니다. 서버가 잠시 끊기면 로컬 최신 상태는 그대로 남습니다.
+    const seen = new Set<string>()
+    return [...harnessSummaries, ...sandbox, ...fixtures].filter((run) => {
+      if (seen.has(run.id)) return false
+      seen.add(run.id)
+      return true
+    })
   }
 
   async getRun(runId: string): Promise<RunSnapshot> {
     const sandboxed = this.sandboxRuns.get(runId)
-    if (sandboxed) return structuredClone(sandboxed)
+    if (sandboxed && !isActive(sandboxed)) return structuredClone(sandboxed)
     // 픽스처 실행까지 백엔드에 물어보지 않습니다. 소유자가 누구인지는 목록에서 이미 정해졌습니다.
     if (!this.harnessIds.has(runId)) return this.fallback.getRun(runId)
 
     const cached = this.cache.get(runId)
-    if (cached) return structuredClone(cached)
+    if (cached && !isActive(cached)) return structuredClone(cached)
 
     const snapshot = await requestJson<RunSnapshot>(`/api/workspace/runs/${encodeURIComponent(runId)}`)
     if (snapshot?.run?.id !== runId) {
@@ -123,6 +140,7 @@ export class HttpHarnessClient implements HarnessClient {
     // 오류로 드러나는 편이 낫습니다.
     const valid = validateSnapshot(snapshot)
     this.cache.set(runId, valid)
+    if (sandboxed || isActive(valid) || runId.startsWith('LIVE-')) this.sandboxRuns.set(runId, valid)
     return structuredClone(valid)
   }
 
@@ -149,13 +167,26 @@ export class HttpHarnessClient implements HarnessClient {
       throw new Error(lastErrorMessage ?? `하네스가 시나리오를 실행하지 못했습니다: ${input.harnessScenarioId}`)
     }
     const valid = validateSnapshot(snapshot)
+    this.harnessIds.add(valid.run.id)
     this.sandboxRuns.set(valid.run.id, valid)
     return structuredClone(valid)
   }
 
   async cancelRun(runId: string): Promise<RunSnapshot> {
-    // 계산된 실행은 이미 끝난 결정론적 재생이라 취소할 진행 상태가 없습니다.
-    if (this.isHarnessOwned(runId)) return this.getRun(runId)
+    if (this.isHarnessOwned(runId)) {
+      const current = this.sandboxRuns.get(runId) ?? this.cache.get(runId)
+      if (current && isActive(current)) {
+        const snapshot = await requestJson<RunSnapshot>(`/api/workspace/runs/${encodeURIComponent(runId)}/cancel`, {
+          method: 'POST',
+        })
+        if (!snapshot?.run?.id) throw new Error(lastErrorMessage ?? `하네스 실행을 취소하지 못했습니다: ${runId}`)
+        const valid = validateSnapshot(snapshot)
+        this.sandboxRuns.set(runId, valid)
+        this.cache.set(runId, valid)
+        return structuredClone(valid)
+      }
+      return this.getRun(runId)
+    }
     return this.fallback.cancelRun(runId)
   }
 
@@ -173,8 +204,45 @@ export class HttpHarnessClient implements HarnessClient {
   }
 
   subscribe(runId: string, listener: (snapshot: RunSnapshot) => void): () => void {
-    // 계산된 실행은 결정론적이고 즉시 끝나므로 구독할 진행 상태가 없습니다.
-    if (this.isHarnessOwned(runId)) return () => {}
-    return this.fallback.subscribe(runId, listener)
+    if (!this.isHarnessOwned(runId)) return this.fallback.subscribe(runId, listener)
+
+    const known = this.sandboxRuns.get(runId) ?? this.cache.get(runId)
+    if (known && !isActive(known)) return () => {}
+
+    let disposed = false
+    let inFlight = false
+    let timer: number | undefined
+
+    const stop = () => {
+      disposed = true
+      if (timer !== undefined) window.clearInterval(timer)
+    }
+    const poll = async () => {
+      if (disposed || inFlight) return
+      const latest = this.sandboxRuns.get(runId) ?? this.cache.get(runId)
+      if ((latest && !isActive(latest)) || !this.isHarnessOwned(runId)) {
+        stop()
+        return
+      }
+      inFlight = true
+      try {
+        const snapshot = await requestJson<RunSnapshot>(`/api/workspace/runs/${encodeURIComponent(runId)}`)
+        if (disposed || snapshot?.run?.id !== runId) return
+        const valid = validateSnapshot(snapshot)
+        this.sandboxRuns.set(runId, valid)
+        this.cache.set(runId, valid)
+        listener(structuredClone(valid))
+        if (!isActive(valid)) stop()
+      } catch {
+        // 계약 오류와 일시적인 연결 실패는 다음 조회에서 다시 확인합니다.
+        // 최종적으로 표시할 오류는 상태 훅의 listener 검증이 담당합니다.
+      } finally {
+        inFlight = false
+      }
+    }
+
+    timer = window.setInterval(() => { void poll() }, POLL_INTERVAL_MS)
+    void poll()
+    return stop
   }
 }
