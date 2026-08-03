@@ -1,11 +1,43 @@
 import { AlertTriangle, Ban, CheckCircle2, Clock3, Download, FileText, FlaskConical, ShieldCheck } from 'lucide-react'
 import StatusBadge from '../components/StatusBadge'
-import type { Artifact, RunSnapshot } from '../domain/contracts'
+import type { Artifact, Decision, RunSnapshot, RunSummary, TargetSnapshot } from '../domain/contracts'
 import { downloadText, formatDateTime } from '../lib/format'
 
 // 픽스처 실행은 TYK2가 주인공이지만, 하네스 실행은 가설마다 대상이 다릅니다.
 const focusTargetOf = (snapshot: RunSnapshot) =>
   snapshot.targets.find((item) => item.symbol === 'TYK2') ?? snapshot.targets[0]
+
+/**
+ * 판정 패널은 결정 코어가 내린 값만 말합니다.
+ *
+ * 이 자리에는 "TYK2는 이 IBD 실행의 최적화 대상으로 진행하지 않습니다 / REJECTED"가
+ * 고정되어 있었습니다. 실행할 수 있는 시나리오가 TYK2 픽스처 하나뿐이던 동안에는
+ * 우연히 맞았지만, 콘솔이 하네스 시나리오를 돌리게 되면서 ADVANCE 판정에도 기각을
+ * 표시하게 됐습니다. 화면이 판정을 지어내면 그 아래 근거는 전부 무의미해집니다.
+ */
+const VERDICT_LABELS: Record<Decision, string> = {
+  rejected: 'REJECTED',
+  review: 'REVIEW',
+  insufficient: 'INSUFFICIENT',
+  reference_only: 'REFERENCE ONLY',
+  demo_only: 'DEMO ONLY',
+}
+
+function verdictHeadline(target: TargetSnapshot, run: RunSummary) {
+  const subject = `${target.symbol}는 이 ${run.disease} 실행에서`
+  switch (target.decision) {
+    case 'rejected':
+      return `${subject} 최적화 대상으로 진행하지 않습니다.`
+    // ADVANCE는 채택이 아닙니다. 상태 기계가 AWAITING_APPROVAL에 세워 두므로
+    // 분자 단계는 사람이 승인하기 전까지 열리지 않습니다.
+    case 'review':
+      return `${subject} 규칙을 통과했고, 사람 검토를 기다립니다.`
+    case 'insufficient':
+      return `${subject} 판단에 필요한 근거가 부족합니다.`
+    default:
+      return `${subject} 진행 판단을 내리지 않았습니다.`
+  }
+}
 
 function buildReport(snapshot: RunSnapshot) {
   // 하네스가 계산한 실행은 하네스가 쓴 보고서를 그대로 씁니다. 프런트가 다시
@@ -84,10 +116,10 @@ export default function ReportView({ snapshot }: { snapshot: RunSnapshot }) {
             <strong>PENDING</strong>
           </div>
         ) : (
-          <div className="report-verdict">
+          <div className={`report-verdict verdict-${focusTarget.decision}`}>
             <div className="report-verdict-icon"><ShieldCheck size={22} /></div>
-            <div><span>핵심 판단</span><h3>TYK2는 이 IBD 실행의 최적화 대상으로 진행하지 않습니다.</h3><p>적응증별 임상 반증을 반영했고, 채택 타깃이 없어 분자 단계는 실행하지 않았습니다.</p></div>
-            <strong>REJECTED</strong>
+            <div><span>핵심 판단</span><h3>{verdictHeadline(focusTarget, run)}</h3><p>{focusTarget.rationale}</p></div>
+            <strong>{VERDICT_LABELS[focusTarget.decision]}</strong>
           </div>
         )}
 

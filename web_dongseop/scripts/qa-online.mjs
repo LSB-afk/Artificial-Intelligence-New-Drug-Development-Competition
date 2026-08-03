@@ -191,6 +191,50 @@ try {
   assert(liveMode.selected, '하네스가 켜져 있으면 실제 하네스 API가 기본 선택이어야 합니다.')
   checks.push(`harness presets in dialog ${JSON.stringify(online)}`)
 
+  // ---- 2b. 화면 판정이 백엔드 판정과 같은가 -------------------------------
+  //
+  // 프리셋 하나만 돌려 보면 이 검사는 통과할 수 있습니다. 실제로 그랬습니다:
+  // 판정 패널이 "TYK2 … REJECTED"로 고정돼 있었는데, 기각되는 프리셋만 돌렸기에
+  // 게이트가 초록불이었습니다. 네 개를 전부 돌려 서버가 말한 판정과 대조합니다.
+  // 화면이 판정을 지어내면 그 아래 근거 표시는 전부 의미가 없습니다.
+  const VERDICT_ON_SCREEN = { rejected: 'REJECTED', review: 'REVIEW', insufficient: 'INSUFFICIENT' }
+  const verdicts = []
+  for (const preset of harnessPresets.scenarios) {
+    const expectedSnapshot = await fetch(`${HARNESS_ORIGIN}/api/workspace/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenario: preset.id }),
+    }).then((r) => r.json())
+    const target = expectedSnapshot.targets[0]
+
+    await page.getByRole('button', { name: '새 실행', exact: true }).first().click()
+    await page.locator('.start-modal').waitFor()
+    await wait(600)
+    await page.getByRole('dialog', { name: '새 실행 시작' }).getByRole('button', { name: preset.label, exact: false }).first().click()
+    await page.getByRole('button', { name: /실행 시작/ }).click()
+    await page.locator('.start-modal').waitFor({ state: 'detached' })
+    await page.getByRole('tab', { name: /보고서/ }).click()
+    await page.locator('#panel-report .report-verdict strong').waitFor()
+
+    const shown = await page.evaluate(() => ({
+      label: document.querySelector('#panel-report .report-verdict strong')?.textContent?.trim() ?? '',
+      headline: document.querySelector('#panel-report .report-verdict h3')?.textContent?.trim() ?? '',
+    }))
+    assert(
+      shown.label === VERDICT_ON_SCREEN[target.decision],
+      `"${preset.label}": 서버는 ${target.decision}인데 화면은 ${shown.label} 입니다. 화면이 판정을 지어내고 있습니다.`,
+    )
+    assert(
+      shown.headline.includes(target.symbol),
+      `"${preset.label}": 서버 타깃은 ${target.symbol}인데 화면 문구는 "${shown.headline}" 입니다.`,
+    )
+    verdicts.push(`${preset.label}=${shown.label}`)
+    await page.getByRole('tab', { name: /개요/ }).click()
+  }
+  // 네 프리셋이 전부 같은 판정이면 고정 문구와 구분되지 않습니다.
+  assert(new Set(verdicts.map((v) => v.split('=')[1])).size >= 2, `프리셋이 모두 같은 판정입니다: ${verdicts}`)
+  checks.push(`on-screen verdict matches the harness for every preset (${verdicts.join(', ')})`)
+
   // ---- 3. 프리셋을 실행하면 규칙이 실제로 도는가 --------------------------
   await page.getByRole('button', { name: '새 실행', exact: true }).first().click()
   await page.locator('.start-modal').waitFor()
