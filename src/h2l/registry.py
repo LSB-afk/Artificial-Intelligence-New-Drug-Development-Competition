@@ -13,6 +13,7 @@ Version status values: ``pending``, ``current``, ``superseded``, ``rejected``.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -44,12 +45,12 @@ class SnapshotRegistry:
             versions = [v for v in versions if v["hypothesis_id"] == hypothesis_id]
         if not include_history:
             versions = [v for v in versions if v["status"] in ("pending", "current")]
-        return [dict(v) for v in versions]
+        return [copy.deepcopy(v) for v in versions]
 
     def current(self, hypothesis_id: str) -> Optional[dict]:
         for version in self._state["versions"]:
             if version["hypothesis_id"] == hypothesis_id and version["status"] == "current":
-                return dict(version)
+                return copy.deepcopy(version)
         return None
 
     def events(self) -> list[dict]:

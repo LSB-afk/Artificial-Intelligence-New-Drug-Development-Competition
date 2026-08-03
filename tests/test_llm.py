@@ -10,6 +10,7 @@ explicit config — a suite whose result depends on whether Ollama happens to be
 installed is not a regression test.
 """
 import json
+import urllib.error
 
 import pytest
 
@@ -115,6 +116,27 @@ def test_unreachable_runtime_falls_back_without_raising(facts):
     assert result["source"] == "template"
     assert result["audit"]["outcome"] == "unavailable"
     assert result["text"] == render_template(facts)
+
+
+def test_missing_model_is_distinguished_from_a_transient_outage(facts):
+    """A 404 is the model not being installed, not Ollama being down.
+
+    Both still fall back to the template, but the audit outcome and reason must
+    tell the operator to `ollama pull` instead of reading it as "retry later".
+    """
+    config = LLMConfig(enabled=True, model="gemma2:9b")
+
+    def not_installed(prompt, config):
+        raise urllib.error.HTTPError(
+            f"{config.host}/api/generate", 404, "Not Found", None, None
+        )
+
+    result = explain_decision(REJECT_DECISION, config, generator=not_installed)
+    assert result["source"] == "template"
+    assert result["text"] == render_template(facts)
+    assert result["audit"]["outcome"] == "model_missing"
+    assert "gemma2:9b" in result["fallback_reason"]
+    assert "ollama pull gemma2:9b" in result["fallback_reason"]
 
 
 # ---- fact set ----------------------------------------------------------

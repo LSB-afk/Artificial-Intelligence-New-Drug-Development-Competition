@@ -100,6 +100,14 @@ def _score_judge(cases: list[dict], critic) -> dict:
 def paired_bootstrap(baseline: list[int], candidate: list[int], *, iterations: int, seed: int) -> dict:
     deltas = [c - b for b, c in zip(baseline, candidate)]
     n = len(deltas)
+    if n == 0:
+        return {
+            "iterations": iterations,
+            "seed": seed,
+            "mean_delta": 0.0,
+            "ci_low": 0.0,
+            "ci_high": 0.0,
+        }
     rng = random.Random(seed)
     means = []
     for _ in range(iterations):

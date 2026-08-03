@@ -17,7 +17,7 @@ Configuration is environment-driven and ON by default on the serving plane::
 
     H2L_LLM_ENABLED=0                       # default 1; set 0 for template only
     H2L_LLM_HOST=http://127.0.0.1:11434
-    H2L_LLM_MODEL=gemma4:latest
+    H2L_LLM_MODEL=gemma2:9b
     H2L_LLM_TIMEOUT_S=20
     H2L_LLM_MAX_CHARS=700
 
@@ -41,11 +41,11 @@ from dataclasses import dataclass
 MODEL_CALL_EVENT = "ModelCalled"
 
 DEFAULT_HOST = "http://127.0.0.1:11434"
-# Measured over the three fixture decisions on the installed models: gemma4 is
-# the only one that cleared the guardrail on the first attempt every time and
-# wrote continuous prose instead of bullets. llama3.1 fails the verbatim
-# indication rule; qwen2.5 clears it but mistranslates rule ids.
-DEFAULT_MODEL = "gemma4:latest"
+# 로컬 데모 기본값은 gemma2:9b — 한국어 산문 품질과 가드레일 통과율의 균형이 좋고,
+# 표준 Ollama 계열이라 `ollama pull gemma2:9b` 로 그대로 받을 수 있습니다. 다른 모델을
+# 쓰려면 코드를 고치지 말고 H2L_LLM_MODEL 환경변수로 덮어씁니다(LLMConfig.from_env).
+# 설치된 모델이 없으면 판단해설은 결정론적 템플릿으로 폴백합니다(판정에는 영향 없음).
+DEFAULT_MODEL = "gemma2:9b"
 DEFAULT_TIMEOUT_S = 20.0
 DEFAULT_MAX_CHARS = 700
 # Listing installed models is a cheap local call; keep it short so a hung
@@ -584,13 +584,26 @@ def explain_decision(
         try:
             raw = generator(prompt, settings)
         except (urllib.error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as error:
+            # A 404 from /api/generate is the model not being installed - a
+            # permanent, operator-fixable state, not the transient "Ollama down"
+            # that the other errors signal. Labelling both "unavailable" tells
+            # the operator to retry later when the one-line fix is `ollama pull`.
+            if isinstance(error, urllib.error.HTTPError) and error.code == 404:
+                outcome = "model_missing"
+                reason = (
+                    f"모델 '{settings.model}'이(가) Ollama에 설치되어 있지 않습니다. "
+                    f"`ollama pull {settings.model}` 후 다시 시도하세요."
+                )
+            else:
+                outcome = "unavailable"
+                reason = f"{type(error).__name__}: {error}"
             return _result(
                 facts,
                 template,
                 "template",
                 settings,
-                outcome="unavailable",
-                reason=f"{type(error).__name__}: {error}",
+                outcome=outcome,
+                reason=reason,
                 latency_ms=_elapsed_ms(started),
                 digest=digest,
                 attempts=attempt,

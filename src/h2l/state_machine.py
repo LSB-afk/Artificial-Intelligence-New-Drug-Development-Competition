@@ -51,6 +51,8 @@ class DecisionGate:
             raise InvalidTransition(
                 f"invalid_transition: molecule approval requires AWAITING_APPROVAL, got {state.value}"
             )
+        if not (actor and actor.strip()):
+            raise InvalidTransition("molecule approval requires a named actor")
         return State.MOLECULE_ELIGIBLE
 
     def request_molecule_optimization(self, state: State) -> bool:

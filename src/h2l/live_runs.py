@@ -286,7 +286,10 @@ class LiveRunManager:
             # ``cancel`` already published a terminal snapshot. A cancellation
             # that arrived before the API handler read it is published here.
             if run_id in self._jobs:
-                self.cancel(run_id)
+                try:
+                    self.cancel(run_id)
+                except LiveRunNotFound:
+                    pass
         except Exception as error:  # serving-plane failure; scientific state is untouched
             self._fail(run_id, job, error)
 

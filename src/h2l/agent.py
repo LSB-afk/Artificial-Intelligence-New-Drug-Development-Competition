@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import time
+import urllib.error
 
 from h2l.llm import LLMConfig, explain_decision, generate, prompt_hash
 
@@ -354,7 +355,17 @@ def select_action(goal, steps, tools, config, *, remaining, generator) -> dict:
         outcome, reason = "rejected", str(error)
     except Exception as error:  # transport, timeout, decode - all recoverable
         name, args = policy_action(goal, steps)
-        outcome, reason = "unavailable", f"{type(error).__name__}: {error}"
+        # A 404 is the model not being installed - permanent and operator-fixable,
+        # not the transient outage the other errors signal. Keep them distinct so
+        # the audit points at `ollama pull` instead of "retry later".
+        if isinstance(error, urllib.error.HTTPError) and error.code == 404:
+            outcome = "model_missing"
+            reason = (
+                f"모델 '{config.model}'이(가) Ollama에 설치되어 있지 않습니다. "
+                f"`ollama pull {config.model}` 후 다시 시도하세요."
+            )
+        else:
+            outcome, reason = "unavailable", f"{type(error).__name__}: {error}"
 
     return {
         "action": name,
@@ -422,7 +433,14 @@ def run_agent(
             )
         handler = getattr(tools, choice["action"])
         action_started = time.monotonic()
-        observation = handler(**choice["args"])
+        try:
+            observation = handler(**choice["args"])
+        except Exception as error:  # keep the run bounded when a tool handler fails
+            observation = _observation(
+                f"도구 실행 실패: {type(error).__name__}",
+                {"error": str(error)},
+                refused=True,
+            )
         duration_ms = max(0, int((time.monotonic() - action_started) * 1000))
         step = {
             "step": step_number,
