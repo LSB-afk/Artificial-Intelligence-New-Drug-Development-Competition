@@ -208,7 +208,7 @@ export const h2lSkills: H2LSkill[] = [
   {
     id: 'retrieve-seed-ligands',
     name: '시드 리간드 검색',
-    description: '적격 타깃의 ChEMBL assay와 측정 활성 데이터를 품질 기준으로 선별합니다.',
+    description: '적격 타깃의 ChEMBL assay와 측정 활성 데이터에서 시드 리간드(표적 단백질에 결합하는 분자)를 품질 기준으로 선별합니다.',
     category: '분자 설계',
     status: 'planned',
     ownerIds: ['molecule-discovery-lead', 'molecule-optimizer'],

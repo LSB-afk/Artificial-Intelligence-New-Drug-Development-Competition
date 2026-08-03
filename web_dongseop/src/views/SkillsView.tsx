@@ -30,9 +30,9 @@ export default function SkillsView() {
     <div className="system-page skills-system-page">
       <header className="system-page-header">
         <div>
-          <span className="system-kicker"><Boxes size={14} /> Project skill catalog</span>
-          <h1>AI 에이전트 스킬</h1>
-          <p>실제 <code>03_에이전트/skills</code> 패키지와 담당 에이전트, 실행 경계를 연결한 프로젝트 카탈로그입니다.</p>
+          <span className="system-kicker"><Boxes size={14} /> 프로젝트 스킬 카탈로그</span>
+          <h1>AI 운영 스킬</h1>
+          <p>실제 스킬 패키지와 담당 에이전트, 실행 경계를 연결한 프로젝트 카탈로그입니다.</p>
         </div>
         <div className="system-summary-chips" aria-label="스킬 요약">
           <span><strong>{h2lSkills.length}</strong> 전체 스킬</span>
