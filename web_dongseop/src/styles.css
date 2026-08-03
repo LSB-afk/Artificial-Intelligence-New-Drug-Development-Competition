@@ -2413,6 +2413,8 @@ body { font-size: 15px; }
   height: 670px;
   min-width: 0;
   overflow: auto;
+  /* 스크롤바가 나타나도 콘텐츠 폭이 바뀌지 않게 자리를 고정 → 측정 진동(덜덜 떨림) 차단. */
+  scrollbar-gutter: stable;
   background: #f9fbfc;
 }
 
@@ -2428,7 +2430,6 @@ body { font-size: 15px; }
   width: 1140px;
   height: 840px;
   transform-origin: top left;
-  transition: transform 150ms ease;
 }
 
 .org-chart-canvas svg {

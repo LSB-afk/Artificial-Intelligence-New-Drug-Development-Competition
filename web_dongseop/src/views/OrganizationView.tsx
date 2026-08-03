@@ -1,5 +1,5 @@
 import { CheckCircle2, Maximize2, Minus, Network, Plus, ShieldCheck, Sparkles } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { agentById, h2lAgents, skillById, type H2LAgent } from '../data/agentSystem'
 
 const NODE_W = 280
@@ -48,14 +48,18 @@ export default function OrganizationView() {
   const assignedSkills = selected.skillIds.map((id) => skillById(id)).filter(Boolean)
   const edges = h2lAgents.filter((agent) => agent.parentId).map((agent) => ({ parentId: agent.parentId!, childId: agent.id }))
 
-  // 1140x840 캔버스 전체를 담을 배율을 뷰포트 크기에서 계산합니다(가로/세로 스크롤 제거).
-  useEffect(() => {
+  // 1140x840 캔버스 전체를 담을 배율을 뷰포트 크기에서 계산합니다(스크롤 없이 전부 보이기).
+  // useLayoutEffect: 첫 페인트 전에 정확한 값을 정해 80%→77% 같은 줄어드는 애니메이션을 없앱니다.
+  useLayoutEffect(() => {
     const el = viewportRef.current
     if (!el) return
     const compute = () => {
       const w = el.clientWidth - 24
       const h = el.clientHeight - 24
-      if (w > 0 && h > 0) setFitScale(Math.max(0.25, Math.min(1, Math.min(w / 1140, h / 840))))
+      if (w <= 0 || h <= 0) return
+      const next = Math.max(0.25, Math.min(1, Math.min(w / 1140, h / 840)))
+      // 미세한 변화는 무시해 스크롤바 토글 등으로 인한 진동(덜덜 떨림)을 막습니다.
+      setFitScale((prev) => (Math.abs(prev - next) > 0.004 ? next : prev))
     }
     compute()
     const observer = new ResizeObserver(compute)
