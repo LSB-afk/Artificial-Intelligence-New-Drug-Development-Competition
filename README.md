@@ -188,12 +188,26 @@ curl -X POST http://127.0.0.1:8765/api/agent/sandbox \
 `web_dongseop`는 실행 화면을 그리는 React 콘솔이다. 예전에는 화면 데이터가 전부 TypeScript에 손으로 적혀 있어서, 파이썬 코어를 통째로 지워도 화면이 똑같았다. 지금은 `src/h2l/workspace.py`가 결정 결과를 콘솔의 `RunSnapshot` 계약으로 투영하고, 읽기 전용 `GET /api/workspace/runs`가 그것을 내려준다.
 
 ```bash
+./scripts/dev.sh
+```
+
+하네스(:8765)와 콘솔(:4173)을 함께 띄우고, 둘 다 응답하며 `/api` 프록시가 붙은
+것까지 확인한 뒤 주소를 출력한다. Ctrl-C면 둘 다 내려간다. 포트가 막혀 있으면
+다른 포트로 밀리지 않고 누가 잡고 있는지 알려주고 멈춘다 — 밀린 개발 서버는 QA
+게이트 기본 주소와 어긋나고, 죽은 줄 알았던 예전 코드를 계속 보여 준다.
+
+따로 띄워야 하면:
+
+```bash
 # 1) 하네스
 PYTHONPATH=src python3 -m h2l.server --host 127.0.0.1 --port 8765
 
 # 2) 콘솔 (:4173, /api는 위 서버로 프록시)
 cd web_dongseop && npm run dev
 ```
+
+하네스 없이도 콘솔은 열린다. 대신 고정 픽스처 2건만 보이고 "실제 하네스 API"는
+비활성이다. 화면이 떴다는 것과 규칙이 돈다는 것은 다르다.
 
 | 라우트 | 내용 |
 |---|---|
