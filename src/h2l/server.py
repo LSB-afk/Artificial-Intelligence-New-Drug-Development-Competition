@@ -665,8 +665,16 @@ def _method_not_allowed() -> tuple[int, str, str]:
 
 
 def _serve_static(name: str) -> tuple[int, str, str]:
-    target = (STATIC_DIR / name).resolve()
-    if STATIC_DIR not in target.parents and target != STATIC_DIR / name:
+    # 절대경로/드라이브경로(예: '/Windows/..', 'C:/..')는 STATIC_DIR 밖을 가리키므로
+    # 조인 전에 먼저 막습니다. pathlib의 `/`는 오른쪽이 절대경로면 왼쪽을 버리기 때문입니다.
+    if name.startswith(("/", "\\")) or (len(name) >= 2 and name[1] == ":"):
+        return 404, "application/json", json.dumps({"error": "forbidden"})
+    static_root = STATIC_DIR.resolve()
+    target = (static_root / name).resolve()
+    # relative_to는 '..'/절대경로/드라이브경로를 모두 ValueError로 거부하고 app.js 등만 허용합니다.
+    try:
+        target.relative_to(static_root)
+    except ValueError:
         return 404, "application/json", json.dumps({"error": "forbidden"})
     if not target.is_file():
         return 404, "application/json", json.dumps({"error": "not_found", "path": name})
@@ -700,12 +708,18 @@ class _Handler(BaseHTTPRequestHandler):
             status, ctype, body = route(method, self.path, body)
         except ConsoleError as error:
             status, ctype, body = _console_error(error)
+        except Exception:  # noqa: BLE001 — 어떤 라우트도 요청 스레드의 응답을 죽이지 않게 하는 마지막 방어선
+            status, ctype, body = _json_response(
+                500, {"error": "internal_error", "message": "unexpected server error", "details": {}}
+            )
         payload = body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
-        self.wfile.write(payload)
+        # HEAD는 헤더만 반환해야 하므로 바디를 쓰지 않습니다.
+        if method != "HEAD":
+            self.wfile.write(payload)
 
     def _read_json(self) -> dict:
         try:
