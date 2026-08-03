@@ -1,5 +1,5 @@
 import { CheckCircle2, Maximize2, Minus, Network, Plus, ShieldCheck, Sparkles } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { agentById, h2lAgents, skillById, type H2LAgent } from '../data/agentSystem'
 
 const NODE_W = 280
@@ -39,11 +39,31 @@ function connectionPath(parentId: string, childId: string) {
 
 export default function OrganizationView() {
   const [selectedId, setSelectedId] = useState('research-director')
-  const [zoom, setZoom] = useState(0.88)
+  // zoom === null 이면 뷰포트 크기에 맞춰 자동 축소해 스크롤 없이 전부 보이게 합니다.
+  const [zoom, setZoom] = useState<number | null>(null)
+  const [fitScale, setFitScale] = useState(0.8)
+  const viewportRef = useRef<HTMLDivElement>(null)
   const selected = agentById(selectedId) ?? h2lAgents[0]
   const directReports = useMemo(() => h2lAgents.filter((agent) => agent.parentId === selected.id), [selected.id])
   const assignedSkills = selected.skillIds.map((id) => skillById(id)).filter(Boolean)
   const edges = h2lAgents.filter((agent) => agent.parentId).map((agent) => ({ parentId: agent.parentId!, childId: agent.id }))
+
+  // 1140x840 캔버스 전체를 담을 배율을 뷰포트 크기에서 계산합니다(가로/세로 스크롤 제거).
+  useEffect(() => {
+    const el = viewportRef.current
+    if (!el) return
+    const compute = () => {
+      const w = el.clientWidth - 24
+      const h = el.clientHeight - 24
+      if (w > 0 && h > 0) setFitScale(Math.max(0.25, Math.min(1, Math.min(w / 1140, h / 840))))
+    }
+    compute()
+    const observer = new ResizeObserver(compute)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  const activeZoom = zoom ?? fitScale
 
   return (
     <div className="system-page org-system-page">
@@ -65,14 +85,15 @@ export default function OrganizationView() {
           <div className="org-chart-toolbar">
             <div><strong>조직 구조</strong><span>카드를 선택해 책임과 스킬을 확인하세요.</span></div>
             <div className="org-zoom-controls" aria-label="조직도 확대 축소">
-              <button type="button" onClick={() => setZoom((value) => Math.min(1.15, value + 0.1))} aria-label="조직도 확대"><Plus size={15} /></button>
-              <button type="button" onClick={() => setZoom((value) => Math.max(0.58, value - 0.1))} aria-label="조직도 축소"><Minus size={15} /></button>
-              <button type="button" onClick={() => setZoom(0.88)} aria-label="조직도 화면에 맞추기"><Maximize2 size={15} /></button>
-              <code>{Math.round(zoom * 100)}%</code>
+              <button type="button" onClick={() => setZoom(Math.min(1.15, activeZoom + 0.1))} aria-label="조직도 확대"><Plus size={15} /></button>
+              <button type="button" onClick={() => setZoom(Math.max(0.3, activeZoom - 0.1))} aria-label="조직도 축소"><Minus size={15} /></button>
+              <button type="button" onClick={() => setZoom(null)} aria-label="화면에 맞추기"><Maximize2 size={15} /></button>
+              <code>{Math.round(activeZoom * 100)}%</code>
             </div>
           </div>
-          <div className="org-chart-viewport">
-            <div className="org-chart-canvas" style={{ transform: `scale(${zoom})` }}>
+          <div className="org-chart-viewport" ref={viewportRef}>
+            <div className="org-chart-scaler" style={{ width: 1140 * activeZoom, height: 840 * activeZoom }}>
+            <div className="org-chart-canvas" style={{ transform: `scale(${activeZoom})` }}>
               <svg aria-hidden="true" viewBox="0 0 1140 840">
                 {edges.map((edge) => <path key={`${edge.parentId}-${edge.childId}`} d={connectionPath(edge.parentId, edge.childId)} />)}
               </svg>
@@ -95,6 +116,7 @@ export default function OrganizationView() {
                   </button>
                 )
               })}
+            </div>
             </div>
           </div>
         </section>

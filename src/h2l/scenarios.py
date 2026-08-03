@@ -105,7 +105,7 @@ SCENARIOS: list[dict] = [
         "id": "cross-indication",
         "label": "적응증 불일치",
         "expectation": "HOLD · INDICATION_MATCH_REQUIRED + REQUIRED_EVIDENCE_MISSING",
-        "note": "다른 적응증의 승인 근거만 있습니다. 성공했더라도 이 질환의 지지 근거로 옮겨오지 않고, 옮겨오지 않으므로 남는 지지 근거도 없습니다.",
+        "note": "다른 적응증의 승인 근거뿐이라, 이 질환의 지지 근거로는 인정되지 않습니다.",
         "packet": _packet(
             "DEMO:CROSS", "DEMO-TARGET-C", ["FIX:DEMO-DISEASE"],
             [

@@ -2406,10 +2406,21 @@ body { font-size: 15px; }
 }
 
 .org-chart-viewport {
+  /* 축소된 차트를 가로세로 가운데 정렬. safe로 확대 시엔 시작점이 스크롤로 닿습니다. */
+  display: flex;
+  align-items: safe center;
+  justify-content: safe center;
   height: 670px;
   min-width: 0;
   overflow: auto;
   background: #f9fbfc;
+}
+
+/* 축소된 실제 크기(1140*z x 840*z)를 갖는 래퍼. 스크롤 영역이 보이는 크기와 일치해
+   배율이 뷰포트에 맞으면 스크롤이 생기지 않습니다. flex:none으로 축소를 막습니다. */
+.org-chart-scaler {
+  position: relative;
+  flex: none;
 }
 
 .org-chart-canvas {
